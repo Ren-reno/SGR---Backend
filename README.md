@@ -52,3 +52,14 @@ python manage.py runserver
 
 ## Cuentas de prueba
 _(se completa en la Fase 3, junto con el seed de datos — Decisión 5 de `decisiones.md`)_
+
+## Documentación del proyecto
+
+Documentación interna del equipo, en `docs/`:
+
+| Documento | Contenido |
+|---|---|
+| `docs/decisiones.md` | Decisiones de diseño y alcance de esta entrega (7 entidades), con alternativas descartadas y su justificación |
+| `docs/Plan_Proyecto_SGR_Fusionado.md` | Plan de trabajo por fases y reparto real del equipo |
+| `docs/Guia_Proyecto_Software_SGR_Alumnos.md` | Documento fuente completo del caso SGR (MVP completo, 23 HU). No describe el alcance de este repo — se incluye por trazabilidad. Para el alcance real de esta entrega, ver `decisiones.md` |
+| `docs/enunciado.md` | Enunciado completo de la Evaluación Sumativa II (rúbrica, criterios y requerimientos de las 100 pts) — la Fase 1 de este repo cubre el criterio "Conexión BD + Migraciones" (9 pts) |
