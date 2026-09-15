@@ -128,28 +128,34 @@ fuera del recorte el resto del MVP completo que no hace falta para esta evaluaci
 (Compromiso/agenda colectiva, Indicador con semáforo, Auditoría automática — buenas de agregar si sobra
 tiempo, no imprescindibles).
 
-- [ ] **Tablas maestras (usar 4 de estas):**
+- [x] **Tablas maestras (usar 4 de estas):**
   - **Delegación** — identificador, nombre, estado, responsable, ámbito (RF-001). Es la entidad que scopea todo el sistema.
   - **Funcionario** — PK propia `idInstitucional`, nombre, cargo (FK), delegación (FK), estado (RF-002). Se relaciona con `auth.User` vía `OneToOneField` **directa** (sin modelo `Perfil` intermedio) para poder loguearse con el admin nativo. Los roles múltiples (Administrador, Delegado, Funcionario, Verificador) se gestionan con `auth.Group`, no como campo `rol` propio — se descartó heredar de `AbstractUser` por menor flexibilidad a futuro y porque `AUTH_USER_MODEL` no se puede cambiar después de la primera migración con datos.
   - **Cargo** — nombre del cargo, ítems medibles asociados, vigencia (RF-003).
   - **Período** — fecha inicio, fecha término, estado, días computables (RF-005). Trae una regla de negocio lista para usar como validación en Fase 5: la fecha de término no puede ser anterior al inicio.
-  - *(Opcional, 5ta maestra)* **Ítem/Meta** — ítem, valor objetivo, unidad, ponderador (RF-006, RF-007).
-- [ ] **Tablas operativas (las 3 confirmadas):**
+  - *(Opcional, 5ta maestra)* **Ítem/Meta** — ítem, valor objetivo, unidad, ponderador (RF-006, RF-007). → descartada, ver Decisión 11/"Fuera de alcance" en `decisiones.md`.
+
+  → **Confirmado implementado** en `core/models.py`: las 4 maestras existen tal cual, con `Delegacion.id` y `Funcionario.id_institucional` como PK natural string (Decisión 11).
+- [x] **Tablas operativas (las 3 confirmadas):**
   - **Actividad** — fecha, solicitud/problema, acción, contacto, teléfono, ítem, autor (FK a Funcionario), **período** (FK obligatoria a Período — habilita `list_filter` por período en Fase 4 y la validación de Fase 5), **tipo/servicio/atención/subatención** (`CharField` de texto libre, **sin** `choices` fijos: el catálogo de estos 4 campos es abierto/administrable, no cerrado tipo ENUM; solo 2 de los 4 tienen catálogo cerrado real en la fuente original, así que texto libre es consistente para los 4), estado. Entidad principal del flujo operativo. *(RF-011 pide generar un código único para nombrar/vincular la evidencia — se cubre con la FK real `Evidencia.actividad` + el propio `Evidencia.codigo`, no con un campo aparte en `Actividad`; ver Decisión 3 de `decisiones.md`.)*
   - **Evidencia** — código (identificador único e inmutable, RF-011), archivo o vínculo, actividad (FK), autor, fecha, estado de revisión (RF-012, RF-013). Candidata natural para el Inline de Fase 5 (una Actividad se edita junto con su Evidencia).
   - **Validación** *(nueva respecto al recorte original de 6 entidades)* — relación 1:0..1 hacia Evidencia; campos `decision`, `fecha`, `observacion`, `resultado`, `version`, `funcionario` (verificador, FK). Se implementa como entidad propia y no como campo simple `revisado_por` en Evidencia, porque el diagrama de dominio completo de Actividad 3 ya la modelaba así — usar el campo simple ahora habría significado migrar datos a una tabla nueva en la próxima entrega. Habilita un segundo Inline (`ValidacionInline` en `EvidenciaAdmin`) casi gratis para Fase 5.
-- [ ] Confirmar el campo crítico de scoping (Fase 6): `Funcionario.delegacion` (FK) y, por extensión, `Actividad.autor.delegacion`, `Evidencia.actividad.autor.delegacion` y `Validacion.evidencia.actividad.autor.delegacion` — un funcionario de la Delegación X no debe ver ni modificar Actividades (ni su Evidencia/Validación asociada) cuyo autor pertenece a la Delegación Y (esto es CA-07 del documento SGR).
-- [ ] Armar/ajustar el diagrama ER con tipos de datos y relaciones — esto se reusa directo en el Informe (Fase 7), hacerlo ahora ahorra tiempo después. Relaciones: Delegación 1→N Funcionario, Funcionario N→1 Cargo, Funcionario 1→N Actividad, Período 1→N Actividad (FK obligatoria), Actividad 1→1 (o 1→N) Evidencia, Evidencia 1→0..1 Validación, Período independiente o relacionado a Meta si se agrega esa 5ta maestra
-- [ ] Crear los modelos en Django con sus tipos de datos y relaciones (`ForeignKey`, `on_delete`, `related_name`), incluida la FK `Actividad → Período` y la relación 1:0..1 `Evidencia → Validación`
-- [ ] Agregar el `OneToOneField` de `Funcionario` hacia `auth.User` (no crear un modelo `Perfil` aparte)
-- [ ] Crear los `auth.Group` para los roles (Administrador, Delegado, Funcionario, Verificador) — los roles se gestionan por grupo, no por un campo `rol` en el modelo
-- [ ] Generar y aplicar migraciones (`makemigrations`, `migrate`)
-- [ ] Registrar todo en el admin sin personalizar aún, solo para confirmar que migró bien y las relaciones se ven correctas
+
+  → **Confirmado implementado** en `core/models.py`: `Actividad.periodo` es FK obligatoria (Decisión 1), `Evidencia.archivo` es `FileField` real (Decisión 7), `Validacion.evidencia` es `OneToOneField` FK+UK (Decisión 3). Campo `codigoVerificador` correctamente ausente (retirado por Decisión 3).
+- [x] Confirmar el campo crítico de scoping (Fase 6): `Funcionario.delegacion` (FK) y, por extensión, `Actividad.autor.delegacion`, `Evidencia.actividad.autor.delegacion` y `Validacion.evidencia.actividad.autor.delegacion` — un funcionario de la Delegación X no debe ver ni modificar Actividades (ni su Evidencia/Validación asociada) cuyo autor pertenece a la Delegación Y (esto es CA-07 del documento SGR). → confirmado: `Funcionario.delegacion` existe como FK `PROTECT` (Decisión 8); la cadena de scoping queda lista para Fase 6, incluido el caso borde del Administrador sin `Funcionario` documentado en Decisión 6.
+- [x] Armar/ajustar el diagrama ER con tipos de datos y relaciones — esto se reusa directo en el Informe (Fase 7), hacerlo ahora ahorra tiempo después. Relaciones: Delegación 1→N Funcionario, Funcionario N→1 Cargo, Funcionario 1→N Actividad, Período 1→N Actividad (FK obligatoria), Actividad 1→1 (o 1→N) Evidencia, Evidencia 1→0..1 Validación, Período independiente o relacionado a Meta si se agrega esa 5ta maestra → confirmado: `docs/assets/mer_evaluacion_2_django_admin.puml` + `.png`, enlazados desde el README.
+- [x] Crear los modelos en Django con sus tipos de datos y relaciones (`ForeignKey`, `on_delete`, `related_name`), incluida la FK `Actividad → Período` y la relación 1:0..1 `Evidencia → Validación` → confirmado: los 8 FK/O2O de `core/models.py` coinciden exactamente con la tabla de la Decisión 10.
+- [x] Agregar el `OneToOneField` de `Funcionario` hacia `auth.User` (no crear un modelo `Perfil` aparte) → confirmado: `Funcionario.user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='funcionario')`.
+- [x] Crear los `auth.Group` para los roles (Administrador, Delegado, Funcionario, Verificador) — los roles se gestionan por grupo, no por un campo `rol` en el modelo → confirmado en el Admin durante la verificación de Fase 3: los 4 grupos existen.
+- [x] Generar y aplicar migraciones (`makemigrations`, `migrate`) → confirmado: corridas sin errores.
+- [x] Registrar todo en el admin sin personalizar aún, solo para confirmar que migró bien y las relaciones se ven correctas → confirmado: `core/admin.py` con `admin.site.register()` simple para las 7 entidades.
 
 **Punto de verificación:** alguien del equipo (cualquiera, por la regla de pregunta dirigida) debe poder
 explicar por qué se eligió cada tabla maestra/operativa y qué representa cada relación, sin mirar el
 código. Esto incluye poder justificar por qué `Validación` es una entidad separada y no un campo simple
 dentro de `Evidencia`, y por qué los roles van en `auth.Group` y no en un campo propio de `Funcionario`.
+→ **Aún por ensayar en voz alta entre los 4** — el contenido para responderlo ya está completo en
+`docs/decisiones.md` (Decisiones 1 a 11), pero el ensayo en sí queda para la preparación de Fase 9.
 
 ---
 
@@ -159,22 +165,25 @@ dentro de `Evidencia`, y por qué los roles van en `auth.Group` y no en un campo
 Seguridad, Revisión en vivo) porque el enunciado exige mecanismo *reproducible*, no datos cargados a
 mano una vez.
 
-- [ ] Elegir mecanismo: fixture JSON + `loaddata`, o management command propio (ej. `seed_sgr` / `seed_data`)
-- [ ] Crear los `auth.Group` de roles (Administrador, Delegado, Funcionario, Verificador) como parte del seed, antes de crear usuarios
-- [ ] Crear **al menos 2 Delegaciones** distintas con nombres ficticios (el documento SGR §2.1 prohíbe explícitamente usar datos reales de funcionarios o ciudadanos: "solo se utilizarán datos ficticios o anonimizados")
-- [ ] Crear **al menos 2 usuarios de prueba** con roles distintos, cada uno en una Delegación distinta, con su `Funcionario` enlazado 1:1 a su `auth.User` y asignado al grupo correspondiente:
-  - **Administrador** (superuser, permisos completos, grupo Administrador — "configura delegaciones, usuarios, cargos, catálogos, períodos, metas, ponderaciones y permisos")
-  - **Funcionario** (staff=True, is_superuser=False, acotado a su propia delegación, grupo Funcionario — "registra actividades, compromisos, avances, contactos, servicios y evidencias asociadas")
-  - *(Opcional pero recomendado ahora)* **Verificador** (staff=True, grupo Verificador — es quien decide sobre `Validación` en Fases 5 y 6)
-- [ ] Cargar al menos 1 **Período** con fechas válidas y asociar cada Actividad a su Período vía la FK obligatoria — sin Período asignado, `Actividad` no debería poder guardarse
-- [ ] Cargar Actividades y Evidencias para **ambas** delegaciones — sin esto no se puede demostrar el scoping en Fase 6
-- [ ] Cargar al menos 1 registro de **Validación** sobre una Evidencia existente, para poder demostrar el `ValidacionInline` en Fase 5
-- [ ] Usar valores ya normalizados (misma capitalización, sin variantes) en los 4 campos de texto libre de Actividad (tipo, servicio, atención, subatención) — al no tener `choices`, cualquier variante de escritura aparece como opción distinta en el `list_filter` del Admin y ensucia la demo
-- [ ] Documentar las credenciales de estas cuentas de prueba en el README (nunca usar credenciales personales — lo prohíbe el enunciado, y el documento SGR lo refuerza en §15.3: "no existen contraseñas ni datos reales en el repositorio, base o capturas")
-- [ ] Probar la carga completa desde una base vacía (borrar BD, migrar, correr el seed) al menos una vez antes de seguir — si falla acá, todo lo de abajo se construye sobre una base rota
+- [x] Elegir mecanismo: fixture JSON + `loaddata`, o management command propio (ej. `seed_sgr` / `seed_data`) → resuelto: management command (`core/management/commands/seed_sgr.py`)
+- [x] Crear los `auth.Group` de roles (Administrador, Delegado, Funcionario, Verificador) como parte del seed, antes de crear usuarios → confirmado en el Admin: los 4 grupos existen y se crean antes de los usuarios en `handle()`
+- [x] Crear **al menos 2 Delegaciones** distintas con nombres ficticios (el documento SGR §2.1 prohíbe explícitamente usar datos reales de funcionarios o ciudadanos: "solo se utilizarán datos ficticios o anonimizados") → confirmado: `DEL-001` (Delegación Centro) y `DEL-002` (Delegación Norte)
+- [x] Crear **al menos 2 usuarios de prueba** con roles distintos, cada uno en una Delegación distinta, con su `Funcionario` enlazado 1:1 a su `auth.User` y asignado al grupo correspondiente:
+  - **Administrador** (superuser, permisos completos, grupo Administrador — "configura delegaciones, usuarios, cargos, catálogos, períodos, metas, ponderaciones y permisos") → confirmado: `admin_sgr`, con `Funcionario` propio `FUNC-ADMIN-001` (Decisión 6)
+  - **Funcionario** (staff=True, is_superuser=False, acotado a su propia delegación, grupo Funcionario — "registra actividades, compromisos, avances, contactos, servicios y evidencias asociadas") → confirmado: `funcionario_demo`, `Funcionario` `FUNC-DEMO-001`, Delegación Norte
+  - *(Opcional pero recomendado ahora)* **Verificador** (staff=True, grupo Verificador — es quien decide sobre `Validación` en Fases 5 y 6) → implementado también: `verificador_demo`, `Funcionario` `FUNC-VERIF-001`, Delegación Centro
+- [x] Cargar al menos 1 **Período** con fechas válidas y asociar cada Actividad a su Período vía la FK obligatoria — sin Período asignado, `Actividad` no debería poder guardarse → confirmado: Período 2026-07-01 a 2026-12-31, ambas Actividades del seed lo referencian
+- [x] Cargar Actividades y Evidencias para **ambas** delegaciones — sin esto no se puede demostrar el scoping en Fase 6 → confirmado: Actividad 1 (admin_funcionario, Delegación Centro) y Actividad 2 (funcionario_demo, Delegación Norte), cada una con su Evidencia
+- [x] Cargar al menos 1 registro de **Validación** sobre una Evidencia existente, para poder demostrar el `ValidacionInline` en Fase 5 → confirmado: Validación 1 sobre `EVID-001`, `funcionario` = Verificador Demo Centro
+- [x] Usar valores ya normalizados (misma capitalización, sin variantes) en los 4 campos de texto libre de Actividad (tipo, servicio, atención, subatención) — al no tener `choices`, cualquier variante de escritura aparece como opción distinta en el `list_filter` del Admin y ensucia la demo → confirmado visualmente en el Admin: "Primera Atención" / "Atención Presencial" / "Informes Sociales" / "Informe Aporte Económico", tal como fija la Decisión 4
+- [x] Documentar las credenciales de estas cuentas de prueba en el README (nunca usar credenciales personales — lo prohíbe el enunciado, y el documento SGR lo refuerza en §15.3: "no existen contraseñas ni datos reales en el repositorio, base o capturas") → confirmado: sección "Cuentas de prueba" en `README.md` con las 3 cuentas ficticias generadas por `seed_sgr`
+- [x] Probar la carga completa desde una base vacía (borrar BD, migrar, correr el seed) al menos una vez antes de seguir — si falla acá, todo lo de abajo se construye sobre una base rota → confirmado: `db.sqlite3` borrado, `migrate` + `seed_sgr` corren limpio desde cero
 
 **Punto de verificación:** correr `migrate` + el comando de seed en una máquina/entorno distinto y
-confirmar que aparecen los usuarios y los datos de ambos contextos.
+confirmar que aparecen los usuarios y los datos de ambos contextos. → **Aún pendiente de probar en una
+máquina/entorno realmente distinto** (todo lo anterior se probó en el mismo entorno de desarrollo,
+incluido el reset desde base vacía) — dejar para el ensayo de Fase 9, o probarlo antes si el equipo
+tiene acceso fácil a un segundo computador/venv.
 
 ---
 
