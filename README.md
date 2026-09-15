@@ -43,7 +43,27 @@ python manage.py migrate
 ```
 
 ## Carga de datos de prueba
-_(se completa en la Fase 3 del proyecto)_
+
+El proyecto trae un comando de seed **idempotente** (se puede correr varias veces sin duplicar datos
+ni fallar contra las restricciones `on_delete=PROTECT` — ver Decisión 8 de `docs/decisiones.md`):
+
+```powershell
+python manage.py migrate
+python manage.py seed_sgr
+```
+
+Crea, vía `get_or_create`: los 4 grupos de rol (Administrador, Delegado, Funcionario, Verificador),
+2 Delegaciones ficticias, 3 Cargos, las 3 cuentas de prueba de la tabla de abajo (cada una con su
+`Funcionario` asociado), 1 Período vigente, 2 Actividades (una por Delegación), 2 Evidencias con
+archivo real adjunto, y 1 Validación de ejemplo.
+
+Si se quiere partir de una base completamente limpia (único reset soportado — no borrar filas sueltas
+desde el Admin, ver Decisión 8):
+```powershell
+Remove-Item db.sqlite3
+python manage.py migrate
+python manage.py seed_sgr
+```
 
 ## Levantar el servidor
 ```powershell
@@ -51,7 +71,17 @@ python manage.py runserver
 ```
 
 ## Cuentas de prueba
-_(se completa en la Fase 3, junto con el seed de datos — Decisión 5 de `decisiones.md`)_
+
+Credenciales ficticias, generadas por `seed_sgr` — nunca se usan credenciales personales en este
+repositorio (Decisión 5 de `docs/decisiones.md`).
+
+| Usuario | Contraseña | Rol (grupo) | Delegación |
+|---|---|---|---|
+| `admin_sgr` | `sgr-demo-2026` | Administrador (superuser) | Delegación Centro |
+| `funcionario_demo` | `sgr-demo-2026` | Funcionario | Delegación Norte |
+| `verificador_demo` | `sgr-demo-2026` | Verificador | Delegación Centro |
+
+La contraseña se puede cambiar al correr el seed con `python manage.py seed_sgr --password <otra>`.
 
 ## Documentación del proyecto
 
