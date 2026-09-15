@@ -63,3 +63,40 @@ Documentación interna del equipo, en `docs/`:
 | `docs/Plan_Proyecto_SGR_Fusionado.md` | Plan de trabajo por fases y reparto real del equipo |
 | `docs/Guia_Proyecto_Software_SGR_Alumnos.md` | Documento fuente completo del caso SGR (MVP completo, 23 HU). No describe el alcance de este repo — se incluye por trazabilidad. Para el alcance real de esta entrega, ver `decisiones.md` |
 | `docs/enunciado.md` | Enunciado completo de la Evaluación Sumativa II (rúbrica, criterios y requerimientos de las 100 pts) — la Fase 1 de este repo cubre el criterio "Conexión BD + Migraciones" (9 pts) |
+
+## Diagramas ER (modelo de datos)
+
+Estos diagramas son la fuente de la que sale el modelo de datos que se implementa en Fase 2
+(`models.py`) — tipos de dato, relaciones y FK. La fuente editable es el `.puml` de cada uno
+(cualquier visor/plugin de PlantUML); la imagen de abajo es un render fijo para que se vea
+directo en GitHub, así que si se edita el `.puml` hay que regenerar la imagen.
+
+### MER de esta entrega — 7 entidades (Evaluación Sumativa II: Django Admin)
+
+![MER 7 entidades — Evaluación Sumativa II Django Admin](docs/assets/mer_evaluacion_2_django_admin.png)
+
+Fuente editable: [`docs/assets/mer_evaluacion_2_django_admin.puml`](docs/assets/mer_evaluacion_2_django_admin.puml).
+Ya incorpora las Decisiones 1–4 de `docs/decisiones.md`: FK obligatoria `Actividad → Período`,
+`Funcionario` con `OneToOneField` a `auth.User`, `Validación` como entidad propia (no campo simple
+en `Evidencia`), y los 4 campos de clasificación de `Actividad` como texto libre (sin FK a un
+catálogo cerrado).
+
+### MER completo del dominio — 14 entidades (MVP, 23 HU)
+
+![MER completo del dominio SGR — MVP 23 HU](docs/assets/mer_general_mvp.png)
+
+Fuente editable: [`docs/assets/mer_general_mvp.puml`](docs/assets/mer_general_mvp.puml).
+Diseño de referencia para entregas futuras (incluye `Función`, `CargoFuncion`, `Meta`,
+`ElementoCatalogo`, `Compromiso`, `Indicador`, `Auditoría`) — **no** es el alcance de este repo.
+
+Ante cualquier diferencia entre estos diagramas y `docs/decisiones.md`, `decisiones.md` manda — es el
+documento vivo que se actualiza primero.
+
+#### Cómo regenerar las imágenes tras editar un `.puml`
+
+Requiere Java. Desde la raíz del repo:
+```powershell
+java -jar plantuml.jar -tpng docs/assets/mer_evaluacion_2_django_admin.puml docs/assets/mer_general_mvp.puml -o .
+```
+(descargar `plantuml.jar` desde https://plantuml.com/download si no está en el equipo; no se
+versiona en el repo, solo el resultado `.png`).

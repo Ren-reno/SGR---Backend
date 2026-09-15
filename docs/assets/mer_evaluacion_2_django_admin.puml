@@ -1,0 +1,222 @@
+@startuml er-sgr-mvp
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam linetype ortho
+skinparam roundcorner 4
+skinparam padding 2
+skinparam class {
+  BackgroundColor #EFF6FF
+  BorderColor #2563EB
+  FontColor #1E3A5F
+  AttributeFontColor #334155
+  AttributeFontSize 11
+  FontSize 13
+}
+skinparam ArrowColor #475569
+skinparam TitleFontSize 15
+
+title Diagrama Entidad-Relación — Dominio SGR (MVP, 23 HU)\nDerivado de assets/actividad-3/clases-dominio.puml\nActualizado: se agrega FK Actividad -> Periodo (ausente en la versión original)
+
+' ===================== ENTIDADES =====================
+
+entity "DELEGACION" as Delegacion {
+  *id : VARCHAR <<PK>>
+  --
+  nombre : VARCHAR
+  ambito : VARCHAR
+  estado : BOOLEAN
+}
+
+entity "FUNCIONARIO" as Funcionario {
+  *idInstitucional : VARCHAR <<PK>>
+  --
+  *delegacion_id : VARCHAR <<FK>>
+  *cargo_id : INT <<FK>>
+  nombre : VARCHAR
+  roles : ENUM[] (Rol) — multivaluado
+  estado : BOOLEAN
+  ..
+  (En la implementación Django de la Evaluación
+  Sumativa II, roles se resuelve vía auth.Group
+  y se agrega OneToOne a auth.User — detalle de
+  infraestructura, no de este diagrama de dominio)
+}
+
+entity "CARGO" as Cargo {
+  *idCargo : INT <<PK>>
+  --
+  nombre : VARCHAR
+  estado : BOOLEAN
+  ..
+  (PK surrogada — no explícita en clases-dominio.puml)
+}
+
+entity "FUNCION" as Funcion {
+  *idFuncion : INT <<PK>>
+  --
+  nombre : VARCHAR
+  ..
+  (PK surrogada — no explícita en clases-dominio.puml)
+}
+
+entity "CARGO_FUNCION" as CargoFuncion {
+  *cargo_id : INT <<PK,FK>>
+  *funcion_id : INT <<PK,FK>>
+  --
+  ..
+  (tabla puente — resuelve N:M Cargo↔Funcion : "asigna")
+}
+
+entity "PERIODO" as Periodo {
+  *idPeriodo : INT <<PK>>
+  --
+  inicio : DATE
+  termino : DATE
+  diasComputables : INT
+  estado : VARCHAR
+  umbralAmbar : DECIMAL
+  umbralColectivo : DECIMAL
+  versionParametros : INT
+  ..
+  (PK surrogada)
+}
+
+entity "META" as Meta {
+  *idMeta : INT <<PK>>
+  --
+  *cargo_id : INT <<FK>>
+  *periodo_id : INT <<FK>>
+  item : VARCHAR
+  valorObjetivo : DECIMAL
+  unidad : VARCHAR
+  ponderador : DECIMAL
+  ..
+  (PK surrogada)
+}
+
+entity "ELEMENTO_CATALOGO" as ElementoCatalogo {
+  *codigo : VARCHAR <<PK>>
+  --
+  nombre : VARCHAR
+  tipo : VARCHAR
+  subtipo : VARCHAR
+  estado : BOOLEAN
+}
+
+entity "ACTIVIDAD" as Actividad {
+  *idActividad : INT <<PK>>
+  --
+  *funcionario_id : VARCHAR <<FK>> — autor
+  *periodo_id : INT <<FK>>
+  *tipoActividad_cod : VARCHAR <<FK>>
+  *servicio_cod : VARCHAR <<FK>>
+  *atencion_cod : VARCHAR <<FK>>
+  *subatencion_cod : VARCHAR <<FK>>
+  fecha : DATE
+  solicitudProblema : TEXT
+  accion : TEXT
+  contacto : VARCHAR
+  telefono : VARCHAR
+  estado : VARCHAR
+  ..
+  (PK surrogada; 4 FK independientes hacia
+  ElementoCatalogo — decisión de equipo.
+  ACTUALIZADO: se agrega periodo_id, ausente
+  en la versión original — necesaria para filtrar
+  y validar actividades dentro de su período vigente.
+  Se retira "codigoVerificador": redundante, la
+  verificación ya la resuelve VALIDACION)
+}
+
+entity "COMPROMISO" as Compromiso {
+  *idCompromiso : INT <<PK>>
+  --
+  *funcionario_id : VARCHAR <<FK>> — responsable
+  *delegacion_id : VARCHAR <<FK>>
+  origen : VARCHAR
+  solicitante : VARCHAR
+  fechaComprometida : DATE
+  apoyo : VARCHAR
+  estado : ENUM (EstadoCompromiso)
+  observacion : TEXT
+  ..
+  (PK surrogada)
+}
+
+entity "EVIDENCIA" as Evidencia {
+  *codigo : VARCHAR <<PK>>
+  --
+  *actividad_id : INT <<FK>>
+  archivoOVinculo : VARCHAR
+  fecha : DATE
+  metadatos : TEXT
+  estadoRevision : VARCHAR
+}
+
+entity "VALIDACION" as Validacion {
+  *idValidacion : INT <<PK>>
+  --
+  *evidencia_cod : VARCHAR <<FK,UK>>
+  *funcionario_id : VARCHAR <<FK>> — verificador
+  decision : VARCHAR
+  fecha : DATE
+  observacion : TEXT
+  resultado : BOOLEAN
+  version : INT
+  ..
+  (PK surrogada; evidencia_cod es UNIQUE => 1:0..1)
+}
+
+entity "INDICADOR" as Indicador {
+  *idIndicador : INT <<PK>>
+  --
+  *meta_id : INT <<FK>>
+  *funcionario_id : VARCHAR <<FK>>
+  avance : DECIMAL
+  cumplimiento : DECIMAL
+  cumplimientoPonderado : DECIMAL
+  semaforo : ENUM (Semaforo)
+  fechaCalculo : DATE
+  ..
+  (PK surrogada)
+}
+
+entity "AUDITORIA" as Auditoria {
+  *idAuditoria : INT <<PK>>
+  --
+  *funcionario_id : VARCHAR <<FK>> — usuario
+  evento : VARCHAR
+  fecha : DATE
+  entidad : VARCHAR
+  identificador : VARCHAR
+  valorAnterior : TEXT
+  valorNuevo : TEXT
+  ..
+  (PK surrogada; "identificador" señala la fila
+  afectada de la entidad auditada, no es la PK propia)
+}
+
+' ===================== RELACIONES =====================
+
+Delegacion ||--o{ Funcionario : agrupa
+Cargo ||--o{ Funcionario : ocupa
+Cargo ||--o{ Meta : define
+Cargo ||--o{ CargoFuncion : asigna
+Funcion ||--o{ CargoFuncion : "asignada en"
+Periodo ||--o{ Meta : "vigente en"
+Periodo ||--o{ Actividad : "vigente en"
+Funcionario ||--o{ Actividad : registra
+ElementoCatalogo ||--o{ Actividad : tipoActividad
+ElementoCatalogo ||--o{ Actividad : servicio
+ElementoCatalogo ||--o{ Actividad : atencion
+ElementoCatalogo ||--o{ Actividad : subatencion
+Actividad ||--o{ Evidencia : adjunta
+Evidencia ||--o| Validacion : recibe
+Funcionario ||--o{ Validacion : "valida (rol Verificador)"
+Funcionario ||--o{ Compromiso : "responsable de"
+Delegacion ||--o{ Compromiso : "pertenece a"
+Meta ||--o{ Indicador : calcula
+Funcionario ||--o{ Indicador : posee
+Funcionario ||--o{ Auditoria : genera
+
+@enduml

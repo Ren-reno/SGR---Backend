@@ -1,0 +1,142 @@
+@startuml er-sgr-eval-django-admin
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam linetype ortho
+skinparam roundcorner 4
+skinparam padding 2
+skinparam class {
+  BackgroundColor #EFF6FF
+  BorderColor #2563EB
+  FontColor #1E3A5F
+  AttributeFontColor #334155
+  AttributeFontSize 11
+  FontSize 13
+}
+skinparam ArrowColor #475569
+skinparam TitleFontSize 15
+
+title Diagrama Entidad-Relación — SGR (Evaluación Sumativa II: Django Admin)\n7 entidades — subconjunto del dominio completo (assets/actividad-3/clases-dominio.puml)\nVer anexo con el MER completo (14 entidades) en el informe.
+
+' ===================== ENTIDADES =====================
+
+entity "AUTH_USER" as AuthUser {
+  *id : INT <<PK>>
+  --
+  username : VARCHAR
+  password : VARCHAR (hash)
+  is_staff : BOOLEAN
+  is_superuser : BOOLEAN
+  ..
+  (tabla nativa de Django: auth.User)
+}
+
+entity "DELEGACION" as Delegacion {
+  *id : VARCHAR <<PK>>
+  --
+  nombre : VARCHAR
+  ambito : VARCHAR
+  estado : BOOLEAN
+}
+
+entity "CARGO" as Cargo {
+  *idCargo : INT <<PK>>
+  --
+  nombre : VARCHAR
+  estado : BOOLEAN
+  ..
+  (PK surrogada; en el dominio completo también
+  se relaciona con Meta y CargoFuncion — fuera
+  de alcance en esta entrega)
+}
+
+entity "FUNCIONARIO" as Funcionario {
+  *idInstitucional : VARCHAR <<PK>>
+  --
+  *user_id : INT <<FK,UK>>
+  *delegacion_id : VARCHAR <<FK>>
+  *cargo_id : INT <<FK>>
+  nombre : VARCHAR
+  estado : BOOLEAN
+  ..
+  (DECISIÓN 2: user_id es OneToOne a AuthUser.
+  Roles múltiples vía auth.Group, no como
+  atributo propio — se retira "roles ENUM[]"
+  del diagrama completo)
+}
+
+entity "PERIODO" as Periodo {
+  *idPeriodo : INT <<PK>>
+  --
+  inicio : DATE
+  termino : DATE
+  diasComputables : INT
+  estado : VARCHAR
+  umbralAmbar : DECIMAL
+  umbralColectivo : DECIMAL
+  versionParametros : INT
+  ..
+  (PK surrogada; en el dominio completo también
+  se relaciona con Meta — fuera de alcance)
+}
+
+entity "ACTIVIDAD" as Actividad {
+  *idActividad : INT <<PK>>
+  --
+  *funcionario_id : VARCHAR <<FK>> — autor
+  *periodo_id : INT <<FK>>
+  tipoActividad : VARCHAR
+  servicio : VARCHAR
+  atencion : VARCHAR
+  subatencion : VARCHAR
+  fecha : DATE
+  solicitudProblema : TEXT
+  accion : TEXT
+  contacto : VARCHAR
+  telefono : VARCHAR
+  estado : VARCHAR
+  ..
+  (DECISIÓN 1: FK obligatoria a Periodo, antes ausente.
+  DECISIÓN 4: tipoActividad/servicio/atencion/subatencion
+  pasan de FK a ElementoCatalogo -> CharField de texto
+  libre, catálogo abierto/administrable, sin choices fijos.
+  Se retira "codigoVerificador": redundante con Validacion)
+}
+
+entity "EVIDENCIA" as Evidencia {
+  *codigo : VARCHAR <<PK>>
+  --
+  *actividad_id : INT <<FK>>
+  archivoOVinculo : VARCHAR
+  fecha : DATE
+  metadatos : TEXT
+  estadoRevision : VARCHAR
+}
+
+entity "VALIDACION" as Validacion {
+  *idValidacion : INT <<PK>>
+  --
+  *evidencia_cod : VARCHAR <<FK,UK>>
+  *funcionario_id : VARCHAR <<FK>> — verificador
+  decision : VARCHAR
+  fecha : DATE
+  observacion : TEXT
+  resultado : BOOLEAN
+  version : INT
+  ..
+  (DECISIÓN 3: entidad propia, no campo simple en
+  Evidencia. PK surrogada; evidencia_cod es UNIQUE
+  => 1:0..1. Habilita ValidacionInline en EvidenciaAdmin)
+}
+
+' ===================== RELACIONES =====================
+
+AuthUser ||--|| Funcionario : autentica
+Delegacion ||--o{ Funcionario : agrupa
+Cargo ||--o{ Funcionario : ocupa
+Funcionario ||--o{ Actividad : registra
+Periodo ||--o{ Actividad : "vigente en"
+Actividad ||--o{ Evidencia : adjunta
+Evidencia ||--o| Validacion : recibe
+Funcionario ||--o{ Validacion : "valida (rol Verificador, vía Group)"
+
+@enduml
