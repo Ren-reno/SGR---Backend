@@ -21,7 +21,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group
+from django.contrib.auth.models import Group, Permission
 from django.core.files import File
 from django.core.management.base import BaseCommand
 from django.db import transaction
@@ -39,6 +39,57 @@ from core.models import (
 User = get_user_model()
 
 GRUPOS = ["Administrador", "Delegado", "Funcionario", "Verificador"]
+
+# Fase 6 (ajuste de seed): permisos de modelo Django por grupo. Necesarios
+# porque ModelAdmin.has_add_permission() / has_change_permission() /
+# has_view_permission() de Django SIEMPRE exigen request.user.has_perm(...)
+# como primer chequeo (super().has_*_permission()), ANTES de que corra
+# cualquier lógica de rol o Delegación de Fase 6. Sin estos permisos en el
+# grupo, _es_verificador(request) puede devolver True y aun así
+# ValidacionAdmin.has_add_permission() devuelve False, porque el super()
+# ya cortó el paso. admin_sgr no necesita entrada aquí: es superuser en el
+# seed y Django le concede todos los permisos automáticamente; se
+# incluye explícitamente para Administrador de todas formas, por la misma
+# razón de robustez que ya motiva _sin_restriccion() en admin.py (Decisión
+# 6: un Administrador que no fuera también superuser técnico debe quedar
+# igual de habilitado).
+PERMISOS_POR_GRUPO = {
+    "Administrador": [
+        ("core", "view_actividad"), ("core", "add_actividad"),
+        ("core", "change_actividad"), ("core", "delete_actividad"),
+        ("core", "view_evidencia"), ("core", "add_evidencia"),
+        ("core", "change_evidencia"), ("core", "delete_evidencia"),
+        ("core", "view_validacion"), ("core", "add_validacion"),
+        ("core", "change_validacion"),
+        # delete_validacion deliberadamente excluido: ValidacionAdmin.
+        # has_delete_permission() (Fase 6 / Decisión 12) devuelve False
+        # para todos sin excepción, así que este permiso nunca se ejerce
+        # y no se otorga aunque el usuario sea Administrador.
+    ],
+    "Funcionario": [
+        # Ve y edita sus propias Actividades/Evidencias (get_queryset ya
+        # filtra por Delegación en Fase 6); no crea ni borra ninguna de
+        # las dos desde el Admin, y no tiene ningún permiso sobre
+        # Validacion (Decisión 6: fuera del grupo Verificador, sin
+        # acceso a Validacion en absoluto).
+        ("core", "view_actividad"), ("core", "change_actividad"),
+        ("core", "view_evidencia"), ("core", "change_evidencia"),
+    ],
+    "Verificador": [
+        # Mismo acceso de lectura/edición que Funcionario sobre
+        # Actividad/Evidencia (necesita verlas para poder aprobar
+        # evidencias), más alta y edición de Validacion -- sin
+        # delete_validacion, mismo motivo que en Administrador arriba.
+        ("core", "view_actividad"), ("core", "change_actividad"),
+        ("core", "view_evidencia"), ("core", "change_evidencia"),
+        ("core", "view_validacion"), ("core", "add_validacion"),
+        ("core", "change_validacion"),
+    ],
+    # "Delegado": sin permisos de modelo asignados en esta fase -- el plan
+    # y la Decisión 6 no definen todavía qué puede hacer este rol en el
+    # Admin; se deja el grupo creado (ya lo hacía Fase 3) pero vacío de
+    # permisos, en vez de inventar un alcance no pedido.
+}
 
 SEED_FILES_DIR = Path(settings.BASE_DIR) / "core" / "fixtures" / "seed_files"
 
@@ -77,6 +128,14 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------
     # Grupos -- plan Fase 3: "antes de crear usuarios"
+    #
+    # Fase 6 (ajuste): además de crear el Group, se le asignan los
+    # permisos de modelo de PERMISOS_POR_GRUPO. Sin esto, has_add_permission
+    # / has_change_permission de Fase 6 en EvidenciaAdmin/ValidacionAdmin
+    # bloquean a Funcionario/Verificador en el chequeo base de Django
+    # (super().has_*_permission()), antes de que la lógica de rol y
+    # Delegación de Fase 6 llegue siquiera a evaluarse -- ver comentario
+    # junto a PERMISOS_POR_GRUPO más arriba.
     # ------------------------------------------------------------------
     def _crear_grupos(self):
         grupos = {}
@@ -84,7 +143,33 @@ class Command(BaseCommand):
             grupo, creado = Group.objects.get_or_create(name=nombre)
             grupos[nombre] = grupo
             self._log("Grupo", nombre, creado)
+            self._asignar_permisos(grupo, PERMISOS_POR_GRUPO.get(nombre, []))
         return grupos
+
+    def _asignar_permisos(self, grupo, permisos):
+        # group.permissions.add() es idempotente por sí solo (ManyToMany:
+        # agregar una relación ya existente no la duplica), consistente
+        # con el resto del comando (Decisión 8: correrlo varias veces no
+        # debe cambiar el resultado). Se usa get_by_natural_key() en vez
+        # de una query manual por content_type + codename porque es la
+        # forma estándar de Django de resolver un Permission conociendo
+        # (app_label, codename) sin tener que buscar antes el ContentType.
+        for app_label, codename in permisos:
+            permiso = Permission.objects.get_by_natural_key(
+                codename, app_label, self._modelo_de(codename)
+            )
+            grupo.permissions.add(permiso)
+
+    @staticmethod
+    def _modelo_de(codename):
+        # Permission.objects.get_by_natural_key(codename, app_label, model)
+        # exige el nombre del modelo en minúsculas por separado -- se
+        # deriva del codename ("view_validacion" -> "validacion") en vez
+        # de mantener una tabla aparte, porque Django genera los
+        # codenames de permisos por defecto con este mismo patrón fijo
+        # ("<accion>_<modelo_en_minusculas>") y no hay excepciones a esa
+        # regla entre los permisos que este comando asigna.
+        return codename.split("_", 1)[1]
 
     # ------------------------------------------------------------------
     # Delegaciones -- al menos 2, ficticias (plan: "el documento SGR §2.1
@@ -330,13 +415,45 @@ class Command(BaseCommand):
     # related_name real: Validacion.evidencia -> "validacion" (singular,
     # relacion 1:0..1, Decision 3/10). Validacion.funcionario -> el
     # verificador (Decision 8: Validacion.evidencia usa CASCADE, no PROTECT).
+    #
+    # Fase 6 (ajuste de seed, Bug 1): se valida evidencias[1] (EVID-002,
+    # Actividad de funcionario_demo, Delegación Norte) en vez de
+    # evidencias[0] como en la versión original. Motivo: verificador_demo
+    # pertenece a Delegación Centro (ver _crear_usuarios), y el scoping por
+    # Delegación de Fase 6 (Decisión 6) hace que EvidenciaAdmin.get_queryset
+    # solo le muestre Evidencias de Centro -- es decir, solo EVID-001. Si
+    # esa fuera la que ya queda validada acá, verificador_demo no tendría
+    # ninguna Evidencia pendiente visible para probar en vivo la acción
+    # "aprobar evidencias en lote" (Decisión 9): el único caso de éxito
+    # real quedaría fuera de lo que su propio scoping le permite ver.
+    # Validando en cambio EVID-002 (Norte), EVID-001 (Centro) queda
+    # pendiente y demostrable con verificador_demo tal como pide la
+    # Decisión 9 ("Sirve también para demostrar en vivo el criterio de
+    # seguridad"). No se agrega una tercera Evidencia ni se toca qué
+    # Delegaciones/usuarios existen -- solo cuál de las dos evidencias ya
+    # creadas queda con Validación previa.
+    #
+    # Nota: esta Validación de EVID-002 (Norte) queda con funcionario =
+    # verificador_funcionario (Centro), igual que la versión original del
+    # seed dejaba la de EVID-001 (Centro) con ese mismo verificador. El
+    # scoping por Delegación de Fase 6 (Decisión 6) rige las acciones
+    # hechas EN VIVO a través del Django Admin -- ValidacionAdmin.
+    # formfield_for_foreignkey / has_add_permission -- no una restricción
+    # a nivel de base de datos sobre Validacion.funcionario; este dato de
+    # prueba se crea directo por ORM en el seed, igual que el resto del
+    # comando, y representa simplemente el historial ya existente al
+    # momento en que arranca la demo.
     # ------------------------------------------------------------------
     def _crear_validaciones(self, evidencias, usuarios):
-        if not evidencias:
+        if len(evidencias) < 2:
+            # Con 0 o 1 Evidencia no hay una segunda que validar sin dejar
+            # a verificador_demo sin ningún caso pendiente en Centro; se
+            # omite en vez de forzar el mismo problema que este ajuste
+            # busca resolver (ver bloque de comentario arriba).
             return
-        primera_evidencia = evidencias[0]
+        evidencia_a_validar = evidencias[1]
         validacion, creado = Validacion.objects.get_or_create(
-            evidencia=primera_evidencia,
+            evidencia=evidencia_a_validar,
             defaults=dict(
                 funcionario=usuarios["verificador_funcionario"],
                 fecha=date(2026, 8, 20),
@@ -346,7 +463,7 @@ class Command(BaseCommand):
                 version=1,
             ),
         )
-        self._log("Validación", f"para {primera_evidencia.codigo}", creado)
+        self._log("Validación", f"para {evidencia_a_validar.codigo}", creado)
 
     # ------------------------------------------------------------------
     # Utilidades
