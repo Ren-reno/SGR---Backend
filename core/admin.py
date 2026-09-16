@@ -27,27 +27,59 @@ def _sin_restriccion(request):
     return request.user.groups.filter(name="Administrador").exists()
 
 
+class _SinFuncionario:
+    """
+    Sentinel devuelto por _delegacion_del_usuario() para el caso "usuario sin
+    Funcionario asociado y sin _sin_restriccion()" (Decision 6, caso borde,
+    capa 2).
+
+    Corrección de seguridad (Bug 2, revisión posterior a la primera entrega
+    de Fase 6): antes de esto, este caso devolvía None, el mismo valor que
+    "sin restricción" (superuser/Administrador). get_queryset() y los
+    has_change_permission/has_delete_permission de los tres ModelAdmin
+    interpretaban ambos None de la misma forma con `if delegacion is None:
+    return qs` / `return True`, así que un User sin Funcionario -- ej. un
+    createsuperuser manual sin is_superuser=True, o cualquier cuenta de
+    staff creada fuera del seed -- terminaba viendo y pudiendo modificar
+    TODOS los registros de TODAS las Delegaciones, exactamente lo opuesto
+    de lo que exige la Decisión 6 ("scoping por Delegación" es la regla; la
+    única excepción explícita es Administrador vía _sin_restriccion()).
+
+    Se usa una clase sentinel en vez de, por ejemplo, un string mágico o un
+    objeto Delegacion "vacío", porque necesita ser un valor que:
+    - sea trivialmente distinguible de None (para no romper la rama de
+      "sin restricción" real) y de cualquier instancia real de Delegacion
+      (para que `== delegacion.pk` de las comparaciones existentes falle
+      limpio en vez de coincidir por accidente), y
+    - no requiera cambiar la firma pública de _delegacion_del_usuario() ni
+      el tipo de dato que ya devuelve en el resto de los casos (sigue
+      devolviendo None o una Delegacion real; esto es un tercer valor
+      posible del mismo return, no un cambio de contrato).
+    """
+    pass
+
+
+_SIN_FUNCIONARIO = _SinFuncionario()
+
+
 def _delegacion_del_usuario(request):
     """
-    Devuelve la Delegacion del Funcionario asociado a request.user, o None si:
-    - el usuario no tiene restricción (superuser/Administrador -- ver
-      _sin_restriccion), o
-    - el usuario no tiene Funcionario asociado (caso borde Decision 6).
-
-    None significa "sin restricción de Delegación" en este contexto, no
-    "sin Delegacion asignada" -- se usa exclusivamente para decidir si se
-    filtra o no, nunca se compara contra un campo delegacion=None real.
+    Devuelve:
+    - None si el usuario no tiene restricción (superuser/Administrador --
+      ver _sin_restriccion): "sin restricción de Delegación", se usa
+      exclusivamente para decidir si se filtra o no, nunca se compara
+      contra un campo delegacion=None real.
+    - _SIN_FUNCIONARIO si el usuario no tiene Funcionario asociado (caso
+      borde Decision 6) y tampoco es Administrador/superuser: a
+      diferencia de None, este valor NO habilita bypass de scoping --
+      ver _SinFuncionario arriba (Bug 2). Quien llama debe negar acceso
+      (qs.none() / False) en vez de tratarlo como ausencia de Delegacion.
+    - la Delegacion real del Funcionario en cualquier otro caso.
     """
     if _sin_restriccion(request):
         return None
     if not hasattr(request.user, "funcionario"):
-        # User sin Funcionario asociado (Decision 6, capa 2) -- no forma
-        # parte del seed de Fase 3 ni tiene delegacion propia. Se trata
-        # igual que "sin restriccion" a nivel de scoping por Delegacion:
-        # no hay contra qué comparar. Las permission-checks de Paso 3/4
-        # son las que efectivamente le niegan modificar nada, no este
-        # helper.
-        return None
+        return _SIN_FUNCIONARIO
     return request.user.funcionario.delegacion
 
 
@@ -131,6 +163,15 @@ class ActividadAdmin(admin.ModelAdmin):
         delegacion = _delegacion_del_usuario(request)
         if delegacion is None:
             return qs
+        if delegacion is _SIN_FUNCIONARIO:
+            # Bug 2: un User sin Funcionario asociado y sin
+            # _sin_restriccion() no tiene Delegación contra la cual
+            # comparar -- la Decisión 6 dice "scoping por Delegación" como
+            # regla general, y el único exento es Administrador, no este
+            # caso. Sin fila Funcionario no hay Delegación de la que
+            # "vea todo lo de su Delegación": el resultado correcto es
+            # ningún registro, no todos.
+            return qs.none()
         return qs.filter(funcionario__delegacion=delegacion)
 
     def has_change_permission(self, request, obj=None):
@@ -141,6 +182,8 @@ class ActividadAdmin(admin.ModelAdmin):
         delegacion = _delegacion_del_usuario(request)
         if delegacion is None:
             return True
+        if delegacion is _SIN_FUNCIONARIO:
+            return False  # Bug 2: sin Delegación contra qué comparar -> denegar
         return obj.funcionario.delegacion_id == delegacion.pk
 
     def has_delete_permission(self, request, obj=None):
@@ -151,6 +194,8 @@ class ActividadAdmin(admin.ModelAdmin):
         delegacion = _delegacion_del_usuario(request)
         if delegacion is None:
             return True
+        if delegacion is _SIN_FUNCIONARIO:
+            return False  # Bug 2: mismo criterio que has_change_permission arriba
         return obj.funcionario.delegacion_id == delegacion.pk
 
 
@@ -173,6 +218,9 @@ class EvidenciaAdmin(admin.ModelAdmin):
         delegacion = _delegacion_del_usuario(request)
         if delegacion is None:
             return qs
+        if delegacion is _SIN_FUNCIONARIO:
+            # Bug 2: ver comentario equivalente en ActividadAdmin.get_queryset.
+            return qs.none()
         return qs.filter(actividad__funcionario__delegacion=delegacion)
 
     def has_change_permission(self, request, obj=None):
@@ -183,6 +231,8 @@ class EvidenciaAdmin(admin.ModelAdmin):
         delegacion = _delegacion_del_usuario(request)
         if delegacion is None:
             return True
+        if delegacion is _SIN_FUNCIONARIO:
+            return False  # Bug 2: mismo criterio que en ActividadAdmin
         return obj.actividad.funcionario.delegacion_id == delegacion.pk
 
     def has_delete_permission(self, request, obj=None):
@@ -193,6 +243,8 @@ class EvidenciaAdmin(admin.ModelAdmin):
         delegacion = _delegacion_del_usuario(request)
         if delegacion is None:
             return True
+        if delegacion is _SIN_FUNCIONARIO:
+            return False  # Bug 2: mismo criterio que en ActividadAdmin
         return obj.actividad.funcionario.delegacion_id == delegacion.pk
 
     @admin.action(description='Aprobar evidencias seleccionadas en lote')
@@ -313,6 +365,9 @@ class ValidacionAdmin(admin.ModelAdmin):
         delegacion = _delegacion_del_usuario(request)
         if delegacion is None:
             return qs
+        if delegacion is _SIN_FUNCIONARIO:
+            # Bug 2: ver comentario equivalente en ActividadAdmin.get_queryset.
+            return qs.none()
         return qs.filter(evidencia__actividad__funcionario__delegacion=delegacion)
 
     def has_add_permission(self, request):
@@ -330,6 +385,8 @@ class ValidacionAdmin(admin.ModelAdmin):
         delegacion = _delegacion_del_usuario(request)
         if delegacion is None:
             return True
+        if delegacion is _SIN_FUNCIONARIO:
+            return False  # Bug 2: mismo criterio que en ActividadAdmin/EvidenciaAdmin
         return obj.evidencia.actividad.funcionario.delegacion_id == delegacion.pk
 
     def has_delete_permission(self, request, obj=None):
@@ -352,7 +409,15 @@ class ValidacionAdmin(admin.ModelAdmin):
         # dispone de la Evidencia concreta antes de guardar.
         if db_field.name == "evidencia":
             delegacion = _delegacion_del_usuario(request)
-            if delegacion is not None:
+            if delegacion is _SIN_FUNCIONARIO:
+                # Bug 2: sin Delegación contra qué comparar -> no se ofrece
+                # ninguna Evidencia en el desplegable (coherente con que
+                # has_add_permission ya debería bloquear a este usuario
+                # salvo que además sea Verificador; si lo es igual no
+                # tiene Delegación propia con la que filtrar, así que no
+                # hay conjunto seguro de Evidencias que mostrarle).
+                kwargs["queryset"] = Evidencia.objects.none()
+            elif delegacion is not None:
                 kwargs["queryset"] = Evidencia.objects.filter(
                     actividad__funcionario__delegacion=delegacion
                 )
@@ -369,7 +434,12 @@ class ValidacionAdmin(admin.ModelAdmin):
                 user__groups__name="Verificador"
             ).distinct()
             delegacion = _delegacion_del_usuario(request)
-            if delegacion is not None:
+            if delegacion is _SIN_FUNCIONARIO:
+                # Bug 2: mismo criterio que "evidencia" arriba -- sin
+                # Delegación propia no hay subconjunto seguro de
+                # Funcionarios-Verificador que ofrecer.
+                kwargs["queryset"] = kwargs["queryset"].none()
+            elif delegacion is not None:
                 kwargs["queryset"] = kwargs["queryset"].filter(
                     delegacion=delegacion
                 )

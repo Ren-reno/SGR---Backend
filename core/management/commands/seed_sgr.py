@@ -415,13 +415,45 @@ class Command(BaseCommand):
     # related_name real: Validacion.evidencia -> "validacion" (singular,
     # relacion 1:0..1, Decision 3/10). Validacion.funcionario -> el
     # verificador (Decision 8: Validacion.evidencia usa CASCADE, no PROTECT).
+    #
+    # Fase 6 (ajuste de seed, Bug 1): se valida evidencias[1] (EVID-002,
+    # Actividad de funcionario_demo, Delegación Norte) en vez de
+    # evidencias[0] como en la versión original. Motivo: verificador_demo
+    # pertenece a Delegación Centro (ver _crear_usuarios), y el scoping por
+    # Delegación de Fase 6 (Decisión 6) hace que EvidenciaAdmin.get_queryset
+    # solo le muestre Evidencias de Centro -- es decir, solo EVID-001. Si
+    # esa fuera la que ya queda validada acá, verificador_demo no tendría
+    # ninguna Evidencia pendiente visible para probar en vivo la acción
+    # "aprobar evidencias en lote" (Decisión 9): el único caso de éxito
+    # real quedaría fuera de lo que su propio scoping le permite ver.
+    # Validando en cambio EVID-002 (Norte), EVID-001 (Centro) queda
+    # pendiente y demostrable con verificador_demo tal como pide la
+    # Decisión 9 ("Sirve también para demostrar en vivo el criterio de
+    # seguridad"). No se agrega una tercera Evidencia ni se toca qué
+    # Delegaciones/usuarios existen -- solo cuál de las dos evidencias ya
+    # creadas queda con Validación previa.
+    #
+    # Nota: esta Validación de EVID-002 (Norte) queda con funcionario =
+    # verificador_funcionario (Centro), igual que la versión original del
+    # seed dejaba la de EVID-001 (Centro) con ese mismo verificador. El
+    # scoping por Delegación de Fase 6 (Decisión 6) rige las acciones
+    # hechas EN VIVO a través del Django Admin -- ValidacionAdmin.
+    # formfield_for_foreignkey / has_add_permission -- no una restricción
+    # a nivel de base de datos sobre Validacion.funcionario; este dato de
+    # prueba se crea directo por ORM en el seed, igual que el resto del
+    # comando, y representa simplemente el historial ya existente al
+    # momento en que arranca la demo.
     # ------------------------------------------------------------------
     def _crear_validaciones(self, evidencias, usuarios):
-        if not evidencias:
+        if len(evidencias) < 2:
+            # Con 0 o 1 Evidencia no hay una segunda que validar sin dejar
+            # a verificador_demo sin ningún caso pendiente en Centro; se
+            # omite en vez de forzar el mismo problema que este ajuste
+            # busca resolver (ver bloque de comentario arriba).
             return
-        primera_evidencia = evidencias[0]
+        evidencia_a_validar = evidencias[1]
         validacion, creado = Validacion.objects.get_or_create(
-            evidencia=primera_evidencia,
+            evidencia=evidencia_a_validar,
             defaults=dict(
                 funcionario=usuarios["verificador_funcionario"],
                 fecha=date(2026, 8, 20),
@@ -431,7 +463,7 @@ class Command(BaseCommand):
                 version=1,
             ),
         )
-        self._log("Validación", f"para {primera_evidencia.codigo}", creado)
+        self._log("Validación", f"para {evidencia_a_validar.codigo}", creado)
 
     # ------------------------------------------------------------------
     # Utilidades
