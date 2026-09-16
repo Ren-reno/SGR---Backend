@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.contrib.auth.models import User
 
@@ -68,6 +69,25 @@ class Actividad(models.Model):
     contacto = models.CharField(max_length=150, blank=True)
     telefono = models.CharField(max_length=30, blank=True)
     estado = models.CharField(max_length=30)
+
+    def clean(self):
+        # Fase 5 — Decisión 1 / Plan Fase 5: la fecha de la Actividad debe
+        # caer dentro del rango [periodo.inicio, periodo.termino] del
+        # Periodo asignado. Sin periodo_id todavía (ej. formulario a medio
+        # llenar en el Admin) no hay nada contra qué validar: se omite en
+        # silencio y deja que la validación NOT NULL de Django se encargue
+        # de exigir el campo por su cuenta.
+        super().clean()
+        if self.periodo_id is None or self.fecha is None:
+            return
+        if not (self.periodo.inicio <= self.fecha <= self.periodo.termino):
+            raise ValidationError({
+                'fecha': (
+                    f"La fecha ({self.fecha}) debe estar dentro del "
+                    f"período asignado ({self.periodo.inicio} – "
+                    f"{self.periodo.termino})."
+                )
+            })
 
     def __str__(self):
         return f"Actividad {self.pk} — {self.tipo_actividad}"
