@@ -192,6 +192,25 @@ Se descartó permitir re-aprobar generando una segunda fila de `Validacion` por 
 
 ---
 
+### Decisión 9-bis — `estado_revision` al aprobar en lote
+
+**Decisión:** además de crear la `Validacion` nueva, la acción "aprobar evidencias en lote" (Decisión 9) marca `Evidencia.estado_revision = 'Aprobada'` en las Evidencias que efectivamente procesa — y solo en esas.
+
+**Origen de esta decisión:** se definió durante la construcción de Fase 5, igual que la Decisión 9, y quedó marcada como "pendiente de registrar formalmente" en `Fase5_Admin_Pro_Guia.md` hasta esta actualización (agregada en la revisión cruzada de Fase 4/5/6).
+
+**Justificación:**
+- `Evidencia.estado_revision` (RF-012/RF-013) necesita reflejar el resultado de la revisión en algún punto del flujo; la Decisión 9 define la creación de `Validacion` pero no toca explícitamente este campo, dejando un vacío entre "existe una Validación aprobada" y "la Evidencia se ve aprobada en su propio listado".
+- Actualizarlo dentro de la misma acción (y no en un flujo aparte) mantiene en un solo lugar del código toda la lógica de qué significa "aprobar una evidencia en lote", en vez de repartir el efecto en dos sitios distintos del Admin.
+
+**Criterios exactos aplicados (para que el código y esta decisión no diverjan):**
+1. Se actualiza **solo** en las Evidencias que reciben `Validacion` nueva en esa misma ejecución de la acción.
+2. Las Evidencias excluidas del procesamiento (ya tenían `Validacion`, o no tienen `archivo` cargado) **no** tocan `estado_revision` bajo ningún motivo — no hay decisión, ni en la 9 ni en esta 9-bis, sobre qué hacer con esos dos casos, así que no se inventa una regla para ellos.
+3. Este es el único punto del código donde `estado_revision` cambia; no se modifica en ningún otro flujo del Admin.
+
+**Alternativa descartada:** dejar `estado_revision` sin tocar y actualizarlo a mano aparte. Se descartó porque duplicaría el trabajo manual que la acción en lote ya existe para evitar.
+
+---
+
 ### Decisión 10 — `related_name` de cada FK
 
 **Decisión:** se fija la siguiente convención para todas las FK del modelo (acceso inverso desde el modelo padre):
@@ -232,6 +251,21 @@ Se descartó permitir re-aprobar generando una segunda fila de `Validacion` por 
 
 ---
 
+### Decisión 12 — Borrado de `Validacion` desde el Admin
+
+**Decisión:** nadie puede borrar una `Validacion` desde el Admin, ni siquiera `admin_sgr` (superuser / grupo Administrador). `ValidacionAdmin.has_delete_permission()` retorna `False` sin excepción.
+
+**Origen de esta decisión:** detectada como hueco en la revisión cruzada de Fase 4/5/6 — la tabla de métodos nuevos de Fase 6 ya pedía `has_delete_permission()` en `ValidacionAdmin`, pero el código no lo tenía. No hay una decisión previa del equipo sobre este punto específico; se formaliza acá.
+
+**Justificación:**
+- Coherente con la Decisión 8 (`PROTECT` como política general de `on_delete`, justificada explícitamente para preservar rastro de gestión y rendición de cuentas).
+- Coherente con la razón de ser de la Decisión 9: la acción de aprobar evidencias en lote usa `Validacion.objects.create()` y nunca `update_or_create()`, precisamente para no pisar una revisión previa sin dejar rastro. Permitir el borrado —aunque sea restringido por rol y Delegación— reabre el mismo problema por otra vía: el historial se pierde igual, ya sea por una actualización silenciosa o por un `DELETE`.
+- Regla de una sola línea, sin casos borde adicionales que resolver (no hay que definir qué pasa si el Verificador que borra no es el mismo que creó la `Validacion`, ni qué pasa si esa `Validacion` ya fue citada en un reporte, etc.).
+
+**Alternativa descartada:** permitir borrar solo al grupo Verificador/Administrador y solo dentro de su propia Delegación (mismo patrón de `has_change_permission`). Se descartó porque un Verificador podría borrar una revisión ya emitida, contradiciendo el espíritu "nunca perder el rastro" que ya motiva la Decisión 9 — el costo de habilitar el borrado no se justifica frente a un beneficio de negocio concreto que lo pida.
+
+---
+
 ## Verificación de alcance contra la rúbrica
 
 Las 7 entidades escogidas (Delegación, Cargo, Funcionario, Período, Actividad, Evidencia, Validación) fueron confirmadas como necesarias y suficientes para cada criterio de esta evaluación:
@@ -240,7 +274,7 @@ Las 7 entidades escogidas (Delegación, Cargo, Funcionario, Período, Actividad,
 |---|---|
 | Admin Básico (4 maestras + 2 operativas) | 4 maestras + 3 operativas (por sobre el mínimo) |
 | Inline | `ValidacionInline` en `EvidenciaAdmin` |
-| Acción personalizada | Aprobar evidencias en lote, restringida al grupo `Verificador` (Decisión 9) |
+| Acción personalizada | Aprobar evidencias en lote, restringida al grupo `Verificador` (Decisión 9), y actualiza `estado_revision` (Decisión 9-bis) |
 | Validación (`clean()`) | Fecha de `Actividad` dentro del rango de su `Periodo` |
 | Seguridad / scoping | Vía `Funcionario.delegacion_id` → filtra `Actividad` y `Evidencia` por delegación del usuario logueado |
 
@@ -273,3 +307,4 @@ El MER completo (14 entidades) se adjunta como anexo en el informe, documentando
 - [x] ~~**Nuevo, para Fase 3 (seed):** el default `PROTECT` (Decisión 8) implica que el orden de borrado/recreación de fixtures importa, y que un comando de seed no idempotente puede trabarse contra sus propias protecciones al re-ejecutarse sobre datos parcialmente cargados.~~ → resuelto: `core/management/commands/seed_sgr.py` usa `get_or_create` en la creación de grupos, delegaciones, cargos, usuarios, funcionarios, período, actividades, evidencias y validación — comando probado idempotente (dos corridas seguidas sin duplicar ni lanzar `ProtectedError`/`UNIQUE constraint failed`) y probado también desde base vacía (`db.sqlite3` borrado → `migrate` → `seed_sgr`, corre limpio). Reset documentado como único método soportado: borrar `db.sqlite3` y volver a migrar, nunca borrar filas sueltas desde el Admin.
 - [x] ~~**Nuevo, para Fase 2 (settings/config):** configurar `MEDIA_URL` y `MEDIA_ROOT` en `settings.py`, y servir archivos de media en `urls.py` en desarrollo.~~ → resuelto en Fase 2, confirmado funcional en Fase 3: `Evidencia.archivo` sube y sirve archivos reales en el Admin (verificado manualmente — el PDF de cada Evidencia del seed se ve y descarga correctamente).
 - [x] ~~Definir `related_name` de cada FK~~ → resuelto: convención plural/singular según cardinalidad, ver Decisión 10.
+- [x] ~~**Nuevo, detectado en revisión cruzada de Fase 4/5/6:** definir si `Validacion` puede borrarse desde el Admin~~ → resuelto: nadie puede borrarla, ni siquiera `admin_sgr` (ver Decisión 12).

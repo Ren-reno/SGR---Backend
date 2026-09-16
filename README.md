@@ -10,9 +10,11 @@ Caso: Delegaciones municipales, I. Municipalidad de La Serena.
 No se requiere instalar un motor de base de datos aparte: el proyecto usa SQLite, incluido con Python.
 
 ## Instalación
+Repositorio: [SGR---Backend](https://github.com/Ren-reno/SGR---Backend)
+
 ```powershell
-git clone <url-del-repo>
-cd <carpeta-del-repo>
+git clone https://github.com/Ren-reno/SGR---Backend
+cd SGR---Backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -69,6 +71,8 @@ python manage.py seed_sgr
 ```powershell
 python manage.py runserver
 ```
+Entrar a **http://127.0.0.1:8000/admin/** (no a `http://127.0.0.1:8000/` sin más — este backend
+no tiene una vista pública en la raíz, solo el Django Admin, así que `/` da 404 por diseño).
 
 ## Cuentas de prueba
 
