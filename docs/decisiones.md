@@ -266,6 +266,30 @@ Se descartó permitir re-aprobar generando una segunda fila de `Validacion` por 
 
 ---
 
+### Decisión 13 — Renombrado a inglés y separación en 3 apps (`accounts`, `organization`, `performance`)
+
+**Origen de esta decisión:** la evaluación formativa recibida después de esta entrega (criterios 2.1.1–2.1.4, distinta y más amplia que el enunciado original de 2.1.1–2.1.2 contra el que se construyeron las Decisiones 1 a 12) exige explícitamente "nombres técnicos de modelos, tablas y campos en inglés" y "proyecto modular con mínimo 2 aplicaciones internas y responsabilidades separadas". Ninguna de las dos cosas estaba resuelta: las 7 entidades de esta entrega (Delegación, Cargo, Funcionario, Período, Actividad, Evidencia, Validación) estaban en español, y todas vivían en la única app `core`.
+
+**Decisión:**
+1. Se renombran las 7 entidades y sus campos a inglés: `Delegacion`→`Delegation`, `Cargo`→`Position`, `Funcionario`→`Employee`, `Periodo`→`Period`, `Actividad`→`Activity`, `Evidencia`→`Evidence`, `Validacion`→`Validation` (mapeo campo a campo documentado en el docstring de cada modelo). Los campos `estado` que eran `BooleanField` (activo/inactivo) pasan a `is_active`; los que eran `CharField` de texto libre (`Periodo.estado`, `Actividad.estado`) pasan a `status`, sin agregar `choices=` todavía — eso sigue pendiente (ver Pendientes).
+2. Se reemplaza la app única `core` por 3 apps:
+   - `accounts`: login, logout y recuperación de contraseña por código de 6 dígitos. Sin modelos propios de esta entrega — queda vacía y lista para esa pieza de trabajo, asignada aparte de los 8 módulos del dominio completo.
+   - `organization`: `Delegation`, `Position`, `Employee`.
+   - `performance`: `Period`, `Activity`, `Evidence`, `Validation`, y el comando `seed_sgr` (que depende de `organization.models`, no al revés).
+3. Se ejecuta como reset limpio (borrar `db.sqlite3` y las migraciones de `core`, generar migraciones nuevas desde cero) en vez de `RenameModel`/`SeparateDatabaseAndState`, porque no hay datos reales que preservar — solo lo que genera `seed_sgr`, que es reproducible.
+
+**Justificación:**
+- 3 apps y no 2: meter el futuro modelo de recuperación de contraseña dentro de `organization` o `performance` solo para llegar al mínimo de 2 habría sido una costura artificial. El requisito pide "responsabilidades separadas", no un número exacto — `accounts` (acceso) es una responsabilidad genuinamente distinta a `organization` (estructura institucional) y a `performance` (el dominio de Gestión de Resultados), y se sostiene sola en la revisión oral.
+- Dependencia en un solo sentido: `performance` importa de `organization` (`Employee` en `models.py` y `admin.py`), nunca al revés — se verificó que ningún archivo de `organization` necesita importar de `performance`. Es la misma razón por la que `seed_sgr` vive en `performance/management/commands/` y no en `organization/`.
+- No se subdividió `performance` en apps más chicas para acercarse a un reparto más parejo de entidades: `Activity`↔`Evidence`↔`Validation` están fuertemente acopladas entre sí (inlines, scoping en cadena vía `evidence__activity__employee__delegation`), y separarlas solo agregaría FKs cruzadas sin ganar separación de responsabilidades real.
+- Comentarios de diseño (Decisión 6, Bug 1, Bug 2, Decisión 9/9-bis) se mantienen en español y sin reescribir el razonamiento — solo se actualizan los nombres de clases/campos que mencionan, para que sean consistentes con el código real.
+
+**Verificado antes de integrar esta decisión:** `manage.py check` sin errores; `makemigrations`/`migrate` limpios sobre base vacía; `seed_sgr` corre completo y es idempotente en una segunda corrida (incluye la asignación de permisos por grupo, que cambia de `("core", "view_actividad")` a `("performance", "view_activity")` — el `app_label` de los permisos de Django sigue el nombre de la app, no solo el del modelo); scoping por Delegación y la acción de aprobar evidencias en lote probados en runtime con los 3 usuarios de prueba, con el mismo resultado que antes del renombrado.
+
+**Alternativa descartada:** mantener `core` y solo renombrar los modelos dentro de ella (resolvería el idioma pero no el mínimo de 2 apps), o partir en exactamente 2 apps forzando la recuperación de contraseña dentro de una de ellas (ver justificación arriba).
+
+---
+
 ## Verificación de alcance contra la rúbrica
 
 Las 7 entidades escogidas (Delegación, Cargo, Funcionario, Período, Actividad, Evidencia, Validación) fueron confirmadas como necesarias y suficientes para cada criterio de esta evaluación:
@@ -308,3 +332,7 @@ El MER completo (14 entidades) se adjunta como anexo en el informe, documentando
 - [x] ~~**Nuevo, para Fase 2 (settings/config):** configurar `MEDIA_URL` y `MEDIA_ROOT` en `settings.py`, y servir archivos de media en `urls.py` en desarrollo.~~ → resuelto en Fase 2, confirmado funcional en Fase 3: `Evidencia.archivo` sube y sirve archivos reales en el Admin (verificado manualmente — el PDF de cada Evidencia del seed se ve y descarga correctamente).
 - [x] ~~Definir `related_name` de cada FK~~ → resuelto: convención plural/singular según cardinalidad, ver Decisión 10.
 - [x] ~~**Nuevo, detectado en revisión cruzada de Fase 4/5/6:** definir si `Validacion` puede borrarse desde el Admin~~ → resuelto: nadie puede borrarla, ni siquiera `admin_sgr` (ver Decisión 12).
+- [x] ~~**Nuevo, por evaluación formativa 2.1.1–2.1.4:** renombrar a inglés las 7 entidades de esta entrega y decidir la partición en apps Django~~ → resuelto: ver Decisión 13 (`accounts` / `organization` / `performance`).
+- [ ] **Nuevo, por evaluación formativa 2.1.1–2.1.4:** diseñar e implementar login, logout y recuperación de contraseña por código de 6 dígitos (vive en `accounts`, que quedó sin modelos por la Decisión 13). Asignado como pieza de trabajo aparte de los 8 módulos del dominio completo — sin dueño confirmado todavía dentro del equipo.
+- [ ] **Nuevo, por evaluación formativa 2.1.1–2.1.4:** definir qué entidades son "eliminables" (con `deleted_at` o equivalente) y el patrón de manager/queryset para excluirlas de listados normales — todavía no implementado en ninguna de las 7 entidades actuales.
+- [ ] **Nota de numeración:** si en una entrega futura se documenta la decisión de agregar `Actividad.meta` (FK a `Meta`, Fase de Metas) como una decisión aparte, debe numerarse **Decisión 14**, no 13 — ese número ya lo ocupa esta separación en apps.
