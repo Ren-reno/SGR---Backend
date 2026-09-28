@@ -3,9 +3,9 @@
 **Proyecto:** SGR — Sistema de Gestión de Resultados
 **Caso:** Delegaciones municipales, Ilustre Municipalidad de La Serena
 **Evaluación:** Backend (Programación Back End, TI3041) — distinta de la evaluación de Ingeniería de Software (repo `ev1`)
-**Alcance de esta entrega:** 7 entidades (4 maestras: Delegación, Cargo, Funcionario, Período — 3 operativas: Actividad, Evidencia, Validación)
+**Alcance de esta entrega (evaluación formativa en curso, criterios 2.1.1–2.1.4 de `docs/Evaluacion_Formativa_U2_BackEnd_TI3V41_INACAP.md`):** 10 entidades — 6 maestras (Delegación, Cargo, Período, Meta, ElementoCatalogo, Compromiso) y 4 operativas (Funcionario, Actividad, Evidencia, Validación).
 
-> Este documento registra únicamente las decisiones tomadas para esta entrega. El MER completo del dominio (14 entidades, `assets/actividad-3/clases-dominio.puml`) se mantiene como diseño de referencia para entregas futuras — ver sección "Fuera de alcance" al final.
+> Este documento registra las decisiones tomadas para las distintas entregas que comparten este repo. El MER completo del dominio (14 entidades, `assets/actividad-3/clases-dominio.puml`) fue fijado por la Decisión 14 como alcance futuro, pero la Decisión 15 aclara que ese alcance de 8 módulos/14 entidades corresponde a la Evaluación Sumativa III (Eva 3, aún no entregada) — no a la evaluación formativa que se está desarrollando ahora mismo, documentada en `docs/Evaluacion_Formativa_U2_BackEnd_TI3V41_INACAP.md`. Ver Decisión 15 y sección "Alcance de entidades" al final para el detalle de qué corresponde a cada entrega.
 
 ---
 
@@ -266,6 +266,72 @@ Se descartó permitir re-aprobar generando una segunda fila de `Validacion` por 
 
 ---
 
+### Decisión 13 — Renombrado a inglés y separación en 3 apps (`accounts`, `organization`, `performance`)
+
+**Origen de esta decisión:** la evaluación formativa recibida después de esta entrega (criterios 2.1.1–2.1.4, distinta y más amplia que el enunciado original de 2.1.1–2.1.2 contra el que se construyeron las Decisiones 1 a 12) exige explícitamente "nombres técnicos de modelos, tablas y campos en inglés" y "proyecto modular con mínimo 2 aplicaciones internas y responsabilidades separadas". Ninguna de las dos cosas estaba resuelta: las 7 entidades de esta entrega (Delegación, Cargo, Funcionario, Período, Actividad, Evidencia, Validación) estaban en español, y todas vivían en la única app `core`.
+
+**Decisión:**
+1. Se renombran las 7 entidades y sus campos a inglés: `Delegacion`→`Delegation`, `Cargo`→`Position`, `Funcionario`→`Employee`, `Periodo`→`Period`, `Actividad`→`Activity`, `Evidencia`→`Evidence`, `Validacion`→`Validation` (mapeo campo a campo documentado en el docstring de cada modelo). Los campos `estado` que eran `BooleanField` (activo/inactivo) pasan a `is_active`; los que eran `CharField` de texto libre (`Periodo.estado`, `Actividad.estado`) pasan a `status`, sin agregar `choices=` todavía — eso sigue pendiente (ver Pendientes).
+2. Se reemplaza la app única `core` por 3 apps:
+   - `accounts`: login, logout y recuperación de contraseña por código de 6 dígitos. Sin modelos propios de esta entrega — queda vacía y lista para esa pieza de trabajo, asignada aparte de los 8 módulos del dominio completo.
+   - `organization`: `Delegation`, `Position`, `Employee`.
+   - `performance`: `Period`, `Activity`, `Evidence`, `Validation`, y el comando `seed_sgr` (que depende de `organization.models`, no al revés).
+3. Se ejecuta como reset limpio (borrar `db.sqlite3` y las migraciones de `core`, generar migraciones nuevas desde cero) en vez de `RenameModel`/`SeparateDatabaseAndState`, porque no hay datos reales que preservar — solo lo que genera `seed_sgr`, que es reproducible.
+
+**Justificación:**
+- 3 apps y no 2: meter el futuro modelo de recuperación de contraseña dentro de `organization` o `performance` solo para llegar al mínimo de 2 habría sido una costura artificial. El requisito pide "responsabilidades separadas", no un número exacto — `accounts` (acceso) es una responsabilidad genuinamente distinta a `organization` (estructura institucional) y a `performance` (el dominio de Gestión de Resultados), y se sostiene sola en la revisión oral.
+- Dependencia en un solo sentido: `performance` importa de `organization` (`Employee` en `models.py` y `admin.py`), nunca al revés — se verificó que ningún archivo de `organization` necesita importar de `performance`. Es la misma razón por la que `seed_sgr` vive en `performance/management/commands/` y no en `organization/`.
+- No se subdividió `performance` en apps más chicas para acercarse a un reparto más parejo de entidades: `Activity`↔`Evidence`↔`Validation` están fuertemente acopladas entre sí (inlines, scoping en cadena vía `evidence__activity__employee__delegation`), y separarlas solo agregaría FKs cruzadas sin ganar separación de responsabilidades real.
+- Comentarios de diseño (Decisión 6, Bug 1, Bug 2, Decisión 9/9-bis) se mantienen en español y sin reescribir el razonamiento — solo se actualizan los nombres de clases/campos que mencionan, para que sean consistentes con el código real.
+
+**Verificado antes de integrar esta decisión:** `manage.py check` sin errores; `makemigrations`/`migrate` limpios sobre base vacía; `seed_sgr` corre completo y es idempotente en una segunda corrida (incluye la asignación de permisos por grupo, que cambia de `("core", "view_actividad")` a `("performance", "view_activity")` — el `app_label` de los permisos de Django sigue el nombre de la app, no solo el del modelo); scoping por Delegación y la acción de aprobar evidencias en lote probados en runtime con los 3 usuarios de prueba, con el mismo resultado que antes del renombrado.
+
+**Alternativa descartada:** mantener `core` y solo renombrar los modelos dentro de ella (resolvería el idioma pero no el mínimo de 2 apps), o partir en exactamente 2 apps forzando la recuperación de contraseña dentro de una de ellas (ver justificación arriba).
+
+---
+
+### Decisión 14 — Relación `Actividad.meta` y ampliación de alcance a 8 módulos / 14 entidades
+
+**Origen de esta decisión:** el equipo define un alcance de proyecto distinto al fijado en este archivo hasta la Decisión 13: 8 módulos repartidos entre los 4 integrantes, construidos sobre las 14 entidades del diseño de dominio completo (Actividad 3) en vez de las 7 de esta entrega. Esta Decisión 14 dejaba pendiente su número exacto en la nota final de "Pendientes" de más abajo, que ya anticipaba que correspondería a 14 y no a 13 (ese número quedó tomado por la separación en apps).
+
+**Decisión (confirmada por el docente, no un supuesto interno del equipo):** se agrega `Actividad.meta` como FK hacia `Meta`, `on_delete=PROTECT` (coherente con la Decisión 8). Una actividad aporta a una sola meta — no a varias, y no mediante coincidencia con los 4 campos de clasificación existentes (`activity_type`, `service`, `attention`, `sub_attention`), que siguen cumpliendo un rol distinto (clasificar la atención, no imputar avance).
+
+**Justificación:** de tres opciones simuladas con datos de ejemplo (FK directa en `Actividad`; FK inversa desde `Meta` hacia un elemento de catálogo; tabla puente `ActividadMeta`), la FK directa es la única que no sobrecuenta el avance (RN-009) ni reescribe el resultado de períodos ya cerrados si el catálogo cambia después (RN-013, HU-25 criterio 2). Coincide además con la planilla real del cliente, donde cada actividad tiene una única columna ITEM.
+
+**Alternativa descartada:** vincular por coincidencia con los 4 campos de clasificación existentes en vez de una FK directa. Se descartó porque una actividad podía coincidir con más de un clasificador y sumar de más a varias metas a la vez.
+
+**Estado de implementación:** ninguna de las 7 entidades nuevas que requiere el alcance de 8 módulos (`ElementoCatalogo`, `Funcion`, `CargoFuncion`, `Meta`, `Compromiso`, `Indicador`, `Auditoria`) existe todavía en el repo a la fecha de esta anotación, y por lo tanto `Actividad.meta` tampoco — depende de que `Meta` exista primero. Esta decisión registra la regla de negocio confirmada; la sección "Alcance de entidades" más abajo deja de listar estas 7 entidades como excluidas de esta entrega.
+
+**Lo que sigue explícitamente sin confirmar por el docente — no tratar como decisión cerrada:**
+- Si `Indicador` se persiste como tabla o se calcula al vuelo. Hay una *recomendación* de tabla persistida, recalculada por un `services.py`, nunca editable a mano — pero el docente no lo ha zanjado.
+- Si `Compromiso.delegacion` es una FK directa (fuente de verdad, validada con `clean()` contra la delegación del responsable) o si se infiere del responsable. Mismo caso: propuesta del equipo, sin confirmación docente.
+- Si corresponde `created_at`/`updated_at`/`deleted_at` (borrado lógico) en todos los modelos.
+- Si existe un mínimo de complejidad esperado por módulo.
+- El estándar exacto de convención de nombres más allá de "inglés, consistente" — aunque en la práctica el código ya usa `snake_case` desde la Decisión 13.
+
+**Pendiente de equipo:** el reparto de los 8 módulos entre los 4 integrantes.
+
+---
+
+### Decisión 15 — Separación de alcance: Evaluación Formativa (Eva 2 parte 2) vs. Evaluación Sumativa III (Eva 3)
+
+**Origen de esta decisión:** al registrar la Decisión 14 se dejó escrito que las 14 entidades del dominio completo pasaban a ser "el alcance real de este repo". Eso generó una ambigüedad: ese alcance de 8 módulos corresponde en realidad a la Evaluación Sumativa III (Eva 3), evaluación distinta y **todavía no entregada** — no a la evaluación formativa que el equipo está desarrollando ahora mismo. Esta entrega formativa se agrega al repo como `docs/Evaluacion_Formativa_U2_BackEnd_TI3V41_INACAP.md` junto con esta misma decisión, y es la rúbrica vigente contra la que se mide el trabajo actual.
+
+**Decisión:**
+1. El alcance de 8 módulos / 14 entidades (Decisión 14) queda fijado como alcance de la **Eva 3**, no de la entrega en curso. La Decisión 14 no se revierte ni se borra — sigue vigente como registro de la regla de negocio de `Activity.meta` (FK, `on_delete=PROTECT`, una actividad aporta a una sola meta) y como planificación a futuro — pero deja de leerse como "lo que hay que tener construido ahora".
+2. El alcance de la evaluación formativa en curso es el mínimo que exige `docs/Evaluacion_Formativa_U2_BackEnd_TI3V41_INACAP.md`: **mínimo 6 tablas maestras y 4 operacionales** (sin contar tablas internas de Django). Sobre las 7 entidades ya construidas (3 maestras: `Delegation`, `Position`, `Period` — 4 operativas: `Employee`, `Activity`, `Evidence`, `Validation`), se agregan 3 de las 7 candidatas que ya listaba la Decisión 14: `Meta`, `ElementoCatalogo` y `Compromiso`. Resultado: **6 maestras + 4 operativas = 10 entidades de negocio**, cumpliendo el mínimo exacto sin sobre-construir.
+3. Las 4 entidades restantes de la Decisión 14 (`Funcion`, `CargoFuncion`, `Indicador`, `Auditoria`) quedan explícitamente fuera del alcance de esta entrega formativa — no por olvido, sino porque cada una tiene un motivo puntual documentado en la Decisión 14 misma: `Funcion`/`CargoFuncion` (tabla puente) dependen de una decisión de diseño que el equipo aún no toma (qué constituye una "función" en este dominio); `Indicador` tiene pendiente de confirmación docente si se persiste como tabla o se calcula al vuelo; y `Auditoria` exige trazabilidad campo a campo (valor anterior/nuevo) sobre todos los modelos vía señales — costo de implementación desproporcionado frente al puntaje que suma un ítem más de "6+4 tablas" en esta rúbrica puntual.
+
+**Justificación:**
+- Ambas evaluaciones (esta formativa 2.1.1–2.1.4, y la Eva 3 sumativa) comparten el mismo repositorio y el mismo `decisiones.md` — se sigue el mismo patrón ya usado entre la Evaluación Sumativa II (Decisiones 1–12) y esta formativa (Decisión 13): dejar registro escrito del cambio de alcance en vez de sobreescribir sin dejar rastro.
+- `Meta`, `ElementoCatalogo` y `Compromiso` son, de las 7 candidatas de la Decisión 14, las que ya tienen requisito funcional redactado en la fuente del caso (`docs/Guia_Proyecto_Software_SGR_Alumnos.md`): RF-005 a RF-007 / HU-05 para `Meta`; RF-004 / HU-27 para `ElementoCatalogo`; RF-016 a RF-021 / HU-02, HU-12 a HU-15 para `Compromiso`. Ninguna de las tres abre una pregunta de diseño nueva sin resolver, a diferencia de las 4 que quedan fuera.
+- `Meta` en particular ya estaba señalada por la propia Decisión 14 como bloqueador de `Activity.meta` ("Requerida antes de poder agregar `Activity.meta`") — construirla ahora no es alcance nuevo desconectado de lo ya decidido, sino completar una dependencia que ya estaba identificada por escrito.
+- El estado de implementación es honesto en ambos sentidos: ninguna de las 7 candidatas de la Decisión 14 existía en el repo a esa fecha, y esta Decisión 15 no cambia eso — solo aclara cuáles 3 se construyen ahora y cuáles 4 quedan para la Eva 3.
+
+**Alternativa descartada:** dejar el texto de la Decisión 14 tal cual (sin esta aclaración) y resolver el reparto de tablas solo de palabra entre el equipo. Se descartó porque la regla de defensa oral de esta rúbrica exige poder explicar cualquier implementación presentada como propia, y sin este registro escrito el alcance real de esta entrega quedaría ambiguo frente a una Decisión 14 que, leída sola, sugiere 14 entidades ya como alcance vigente.
+
+---
+
 ## Verificación de alcance contra la rúbrica
 
 Las 7 entidades escogidas (Delegación, Cargo, Funcionario, Período, Actividad, Evidencia, Validación) fueron confirmadas como necesarias y suficientes para cada criterio de esta evaluación:
@@ -282,29 +348,42 @@ No se agregan entidades adicionales solo para "tener más" — cada una de las 7
 
 ---
 
-## Fuera de alcance para esta entrega (planificado para entregas futuras)
+## Alcance de entidades (actualizado por la Decisión 14, corregido por la Decisión 15)
 
-Las siguientes entidades del dominio completo (Actividad 3, 14 entidades) **no se implementan en esta evaluación**, por decisión de fasificación del proyecto — no por olvido:
+**Este apartado decía, hasta la Decisión 13, que las 7 entidades siguientes quedaban fuera de esta evaluación "por decisión de fasificación del proyecto — no por olvido". La Decisión 14 revirtió eso**, fijando como alcance 8 módulos sobre las 14 entidades del dominio completo. **La Decisión 15 aclara que ese alcance de 14 entidades corresponde a la Eva 3 (evaluación sumativa III, aún no entregada)**, y que la evaluación formativa en curso (`docs/Evaluacion_Formativa_U2_BackEnd_TI3V41_INACAP.md`) toma solo 3 de estas 7 candidatas. Se deja registro de cada cambio en vez de borrar el texto anterior sin dejar rastro, porque las tres entregas (Evaluación Sumativa II de Admin, esta evaluación formativa de integración, y la futura Eva 3) comparten el mismo repo y el mismo `decisiones.md`.
 
-- `Funcion`
-- `CargoFuncion` (tabla puente Cargo↔Función)
-- `Meta`
-- `ElementoCatalogo` (los 4 campos de clasificación de Actividad son texto libre por ahora — ver Decisión 4)
-- `Compromiso`
-- `Indicador`
-- `Auditoria`
+De las 7 entidades que antes figuraban fuera de alcance, estado real por la Decisión 15 (ninguna existe todavía en el repo a la fecha de esta anotación):
 
-El MER completo (14 entidades) se adjunta como anexo en el informe, documentando que esta entrega implementa un subconjunto de 7 entidades sobre ese diseño de dominio ya definido.
+- `Meta` — **dentro del alcance de esta entrega formativa** (Decisión 15). Requerida antes de poder agregar `Activity.meta` (Decisión 14).
+- `ElementoCatalogo` — **dentro del alcance de esta entrega formativa** (Decisión 15). Cuando exista, queda pendiente decidir si los 4 campos de clasificación de `Activity` (`activity_type`, `service`, `attention`, `sub_attention`, hoy texto libre — ver Decisión 4) migran a FK reales hacia ella; es el cambio más invasivo del lote porque toca datos ya cargados por el seed.
+- `Compromiso` — **dentro del alcance de esta entrega formativa** (Decisión 15). Fuente de verdad de `Compromiso.delegacion` sin confirmar por el docente (ver Decisión 14) — sigue sin confirmar, pendiente para cuando se implemente.
+- `Funcion` — **fuera de esta entrega formativa, alcance de Eva 3** (Decisión 15).
+- `CargoFuncion` (tabla puente Cargo↔Función) — **fuera de esta entrega formativa, alcance de Eva 3** (Decisión 15).
+- `Indicador` — **fuera de esta entrega formativa, alcance de Eva 3** (Decisión 15). Persistencia vs. cálculo al vuelo sin confirmar por el docente (ver Decisión 14).
+- `Auditoria` — **fuera de esta entrega formativa, alcance de Eva 3** (Decisión 15).
+
+El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del repo, pero corresponde a la Eva 3 — el alcance vigente de la entrega en curso es el de la Decisión 15: 10 entidades (6 maestras + 4 operativas).
 
 ## Pendientes
 
 - [x] ~~Definir la acción personalizada concreta de Admin Pro~~ → resuelto: aprobar evidencias en lote, restringida al grupo `Verificador` (Decisión 9).
 - [ ] Confirmar reparto de las **fases del plan de trabajo** entre los 4 integrantes del equipo (pendiente fuera de esta conversación — no bloquea el inicio de Fase 1).
+- [ ] **Nuevo, Decisión 14, alcance Eva 3 (ver Decisión 15):** reparto de los **8 módulos** (distinto del reparto de fases de arriba) entre los 4 integrantes. Queda explícitamente sin fijar, solo sugerido como 2 módulos por integrante. No bloquea la entrega formativa en curso, que usa el alcance de la Decisión 15.
 - [ ] Revisar si, al incorporar `ElementoCatalogo` en una entrega futura, migrar los 4 campos de texto libre de `Actividad` hacia FK reales.
-- [x] ~~Confirmar si `Meta`/`CargoFuncion` se incorporan en esta entrega~~ → resuelto: quedan fuera de alcance, se mantienen las 7 entidades del diagrama actual. `Cargo` conserva una sola relación activa (`Cargo → Funcionario`) por ahora.
+- [x] ~~Confirmar si `Meta`/`CargoFuncion` se incorporan en esta entrega~~ → **revertido por la Decisión 14**: sí se incorporan. Esta línea decía lo contrario hasta la Decisión 13; se mantiene tachada por trazabilidad histórica, no porque siga vigente. `Cargo`/`Position` deja de tener una sola relación activa una vez que exista `CargoFuncion`.
 - [x] ~~Afinar tipos de datos definitivos de cada campo (`IntegerField` vs `PositiveIntegerField`, `FileField` vs `URLField`, etc.)~~ → `Evidencia.archivoOVinculo` resuelto como `FileField` (Decisión 7). Resto de tipos numéricos (`PositiveIntegerField` vs `IntegerField`) queda para revisión campo a campo al momento de escribir `models.py`.
 - [x] ~~Definir política de `on_delete` en las FK~~ → resuelto: `PROTECT` por defecto, `CASCADE` solo en `Funcionario.user` y `Validacion.evidencia` (Decisión 8).
 - [x] ~~**Nuevo, para Fase 3 (seed):** el default `PROTECT` (Decisión 8) implica que el orden de borrado/recreación de fixtures importa, y que un comando de seed no idempotente puede trabarse contra sus propias protecciones al re-ejecutarse sobre datos parcialmente cargados.~~ → resuelto: `core/management/commands/seed_sgr.py` usa `get_or_create` en la creación de grupos, delegaciones, cargos, usuarios, funcionarios, período, actividades, evidencias y validación — comando probado idempotente (dos corridas seguidas sin duplicar ni lanzar `ProtectedError`/`UNIQUE constraint failed`) y probado también desde base vacía (`db.sqlite3` borrado → `migrate` → `seed_sgr`, corre limpio). Reset documentado como único método soportado: borrar `db.sqlite3` y volver a migrar, nunca borrar filas sueltas desde el Admin.
 - [x] ~~**Nuevo, para Fase 2 (settings/config):** configurar `MEDIA_URL` y `MEDIA_ROOT` en `settings.py`, y servir archivos de media en `urls.py` en desarrollo.~~ → resuelto en Fase 2, confirmado funcional en Fase 3: `Evidencia.archivo` sube y sirve archivos reales en el Admin (verificado manualmente — el PDF de cada Evidencia del seed se ve y descarga correctamente).
 - [x] ~~Definir `related_name` de cada FK~~ → resuelto: convención plural/singular según cardinalidad, ver Decisión 10.
 - [x] ~~**Nuevo, detectado en revisión cruzada de Fase 4/5/6:** definir si `Validacion` puede borrarse desde el Admin~~ → resuelto: nadie puede borrarla, ni siquiera `admin_sgr` (ver Decisión 12).
+- [x] ~~**Nuevo, por evaluación formativa 2.1.1–2.1.4:** renombrar a inglés las 7 entidades de esta entrega y decidir la partición en apps Django~~ → resuelto: ver Decisión 13 (`accounts` / `organization` / `performance`).
+- [ ] **Nuevo, por evaluación formativa 2.1.1–2.1.4:** diseñar e implementar login, logout y recuperación de contraseña por código de 6 dígitos (vive en `accounts`, que quedó sin modelos por la Decisión 13). Asignado como pieza de trabajo aparte de los 8 módulos del dominio completo — sin dueño confirmado todavía dentro del equipo.
+- [ ] **Nuevo, por evaluación formativa 2.1.1–2.1.4:** definir qué entidades son "eliminables" (con `deleted_at` o equivalente) y el patrón de manager/queryset para excluirlas de listados normales — todavía no implementado en ninguna de las 7 entidades actuales, y la lista de candidatas crece con la Decisión 14 (probablemente sume `Compromiso`).
+- [ ] **Nuevo, Decisión 14, sin confirmar por el docente (no tratar como resuelto):** si `Indicador` se persiste como tabla o se calcula al vuelo. Solo hay recomendación de tabla persistida con recálculo vía `services.py`.
+- [ ] **Nuevo, Decisión 14, sin confirmar por el docente (no tratar como resuelto):** fuente de verdad de `Compromiso.delegacion` — FK directa vs. inferida del responsable. Solo hay sugerencia de que la FK directa sea la fuente de verdad, validada con `clean()`.
+- [ ] **Nuevo, Decisión 14:** si hay un mínimo de complejidad esperado por módulo — sigue sin respuesta del docente.
+- [x] ~~**Nota de numeración:** si en una entrega futura se documenta la decisión de agregar `Actividad.meta`... debe numerarse **Decisión 14**, no 13~~ → resuelto: ver Decisión 14 arriba.
+- [ ] **Nuevo, Decisión 15:** construir `Meta`, `ElementoCatalogo` y `Compromiso` (`models.py`, migraciones, registro en Django Admin) — ninguna de las tres existe todavía en el repo. `Meta` habilita además implementar `Activity.meta` (Decisión 14), pendiente de la misma forma.
+- [ ] **Nuevo, Decisión 15:** definir en qué app vive cada una de las 3 nuevas entidades (`organization` o `performance`, siguiendo la separación de la Decisión 13) o si ameritan una app propia — sin decidir todavía.
+- [ ] **Nuevo, Decisión 15:** repartir entre el equipo cuál de las 3 nuevas entidades (`Meta`, `ElementoCatalogo`, `Compromiso`) construye cada integrante — sin fijar todavía, análogo al pendiente de reparto de la Decisión 14 pero para el alcance de esta entrega formativa, no el de Eva 3.

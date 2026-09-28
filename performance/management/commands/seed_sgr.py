@@ -14,6 +14,14 @@ en cascada. El unico reset soportado es:
 
 Este comando es idempotente (Decision 8, via get_or_create): correrlo varias
 veces sobre la misma base no duplica registros ni choca con PROTECT.
+
+Movido de core/management/commands/ a performance/management/commands/
+(Decisión 13: renombrado a inglés + separación en apps). Vive en
+`performance` y no en `organization` porque este comando ya depende de
+`organization.models` (Employee/Delegation/Position) para poder crear
+Activity/Evidence/Validation -- ponerlo en `organization` habría invertido
+esa dependencia (organization importando de performance), rompiendo la
+separación de responsabilidades de la Decisión 13.
 """
 
 from datetime import date
@@ -26,15 +34,8 @@ from django.core.files import File
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from core.models import (
-    Actividad,
-    Cargo,
-    Delegacion,
-    Evidencia,
-    Funcionario,
-    Periodo,
-    Validacion,
-)
+from organization.models import Delegation, Employee, Position
+from performance.models import Activity, Evidence, Period, Validation
 
 User = get_user_model()
 
@@ -45,45 +46,49 @@ GRUPOS = ["Administrador", "Delegado", "Funcionario", "Verificador"]
 # has_view_permission() de Django SIEMPRE exigen request.user.has_perm(...)
 # como primer chequeo (super().has_*_permission()), ANTES de que corra
 # cualquier lógica de rol o Delegación de Fase 6. Sin estos permisos en el
-# grupo, _es_verificador(request) puede devolver True y aun así
-# ValidacionAdmin.has_add_permission() devuelve False, porque el super()
+# grupo, _is_verifier(request) puede devolver True y aun así
+# ValidationAdmin.has_add_permission() devuelve False, porque el super()
 # ya cortó el paso. admin_sgr no necesita entrada aquí: es superuser en el
 # seed y Django le concede todos los permisos automáticamente; se
 # incluye explícitamente para Administrador de todas formas, por la misma
-# razón de robustez que ya motiva _sin_restriccion() en admin.py (Decisión
+# razón de robustez que ya motiva _unrestricted() en admin.py (Decisión
 # 6: un Administrador que no fuera también superuser técnico debe quedar
 # igual de habilitado).
+#
+# Nota (Decisión 13): app_label cambia de "core" a "performance" para
+# estos tres modelos tras la separación en apps -- Activity/Evidence/
+# Validation viven ahora en performance/models.py, no en core/models.py.
 PERMISOS_POR_GRUPO = {
     "Administrador": [
-        ("core", "view_actividad"), ("core", "add_actividad"),
-        ("core", "change_actividad"), ("core", "delete_actividad"),
-        ("core", "view_evidencia"), ("core", "add_evidencia"),
-        ("core", "change_evidencia"), ("core", "delete_evidencia"),
-        ("core", "view_validacion"), ("core", "add_validacion"),
-        ("core", "change_validacion"),
-        # delete_validacion deliberadamente excluido: ValidacionAdmin.
+        ("performance", "view_activity"), ("performance", "add_activity"),
+        ("performance", "change_activity"), ("performance", "delete_activity"),
+        ("performance", "view_evidence"), ("performance", "add_evidence"),
+        ("performance", "change_evidence"), ("performance", "delete_evidence"),
+        ("performance", "view_validation"), ("performance", "add_validation"),
+        ("performance", "change_validation"),
+        # delete_validation deliberadamente excluido: ValidationAdmin.
         # has_delete_permission() (Fase 6 / Decisión 12) devuelve False
         # para todos sin excepción, así que este permiso nunca se ejerce
         # y no se otorga aunque el usuario sea Administrador.
     ],
     "Funcionario": [
-        # Ve y edita sus propias Actividades/Evidencias (get_queryset ya
+        # Ve y edita sus propias Activities/Evidences (get_queryset ya
         # filtra por Delegación en Fase 6); no crea ni borra ninguna de
         # las dos desde el Admin, y no tiene ningún permiso sobre
-        # Validacion (Decisión 6: fuera del grupo Verificador, sin
-        # acceso a Validacion en absoluto).
-        ("core", "view_actividad"), ("core", "change_actividad"),
-        ("core", "view_evidencia"), ("core", "change_evidencia"),
+        # Validation (Decisión 6: fuera del grupo Verificador, sin
+        # acceso a Validation en absoluto).
+        ("performance", "view_activity"), ("performance", "change_activity"),
+        ("performance", "view_evidence"), ("performance", "change_evidence"),
     ],
     "Verificador": [
         # Mismo acceso de lectura/edición que Funcionario sobre
-        # Actividad/Evidencia (necesita verlas para poder aprobar
-        # evidencias), más alta y edición de Validacion -- sin
-        # delete_validacion, mismo motivo que en Administrador arriba.
-        ("core", "view_actividad"), ("core", "change_actividad"),
-        ("core", "view_evidencia"), ("core", "change_evidencia"),
-        ("core", "view_validacion"), ("core", "add_validacion"),
-        ("core", "change_validacion"),
+        # Activity/Evidence (necesita verlas para poder aprobar
+        # evidencias), más alta y edición de Validation -- sin
+        # delete_validation, mismo motivo que en Administrador arriba.
+        ("performance", "view_activity"), ("performance", "change_activity"),
+        ("performance", "view_evidence"), ("performance", "change_evidence"),
+        ("performance", "view_validation"), ("performance", "add_validation"),
+        ("performance", "change_validation"),
     ],
     # "Delegado": sin permisos de modelo asignados en esta fase -- el plan
     # y la Decisión 6 no definen todavía qué puede hacer este rol en el
@@ -91,7 +96,9 @@ PERMISOS_POR_GRUPO = {
     # permisos, en vez de inventar un alcance no pedido.
 }
 
-SEED_FILES_DIR = Path(settings.BASE_DIR) / "core" / "fixtures" / "seed_files"
+# Movido de core/fixtures/seed_files a performance/fixtures/seed_files
+# (Decisión 13): los archivos de ejemplo viajan con la app dueña de Evidence.
+SEED_FILES_DIR = Path(settings.BASE_DIR) / "performance" / "fixtures" / "seed_files"
 
 # Decision 4 -- valores de ejemplo ya definidos en decisiones.md, no inventar otros
 TIPO_ATENCION = ["Informes Sociales", "Gestión de Subsidios", "Derivación"]
@@ -131,7 +138,7 @@ class Command(BaseCommand):
     #
     # Fase 6 (ajuste): además de crear el Group, se le asignan los
     # permisos de modelo de PERMISOS_POR_GRUPO. Sin esto, has_add_permission
-    # / has_change_permission de Fase 6 en EvidenciaAdmin/ValidacionAdmin
+    # / has_change_permission de Fase 6 en EvidenceAdmin/ValidationAdmin
     # bloquean a Funcionario/Verificador en el chequeo base de Django
     # (super().has_*_permission()), antes de que la lógica de rol y
     # Delegación de Fase 6 llegue siquiera a evaluarse -- ver comentario
@@ -164,7 +171,7 @@ class Command(BaseCommand):
     def _modelo_de(codename):
         # Permission.objects.get_by_natural_key(codename, app_label, model)
         # exige el nombre del modelo en minúsculas por separado -- se
-        # deriva del codename ("view_validacion" -> "validacion") en vez
+        # deriva del codename ("view_validation" -> "validation") en vez
         # de mantener una tabla aparte, porque Django genera los
         # codenames de permisos por defecto con este mismo patrón fijo
         # ("<accion>_<modelo_en_minusculas>") y no hay excepciones a esa
@@ -173,18 +180,18 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------
     # Delegaciones -- al menos 2, ficticias (plan: "el documento SGR §2.1
-    # prohíbe datos reales"). Delegacion.id es PK natural string (Decision 11).
+    # prohíbe datos reales"). Delegation.id es PK natural string (Decision 11).
     # ------------------------------------------------------------------
     def _crear_delegaciones(self):
         datos = [
-            dict(id="DEL-001", nombre="Delegación Centro", ambito="Urbano"),
-            dict(id="DEL-002", nombre="Delegación Norte", ambito="Rural"),
+            dict(id="DEL-001", name="Delegación Centro", scope="Urbano"),
+            dict(id="DEL-002", name="Delegación Norte", scope="Rural"),
         ]
         delegaciones = {}
         for d in datos:
-            delegacion, creado = Delegacion.objects.get_or_create(id=d["id"], defaults=d)
+            delegacion, creado = Delegation.objects.get_or_create(id=d["id"], defaults=d)
             delegaciones[d["id"]] = delegacion
-            self._log("Delegación", f'{d["id"]} ({d["nombre"]})', creado)
+            self._log("Delegación", f'{d["id"]} ({d["name"]})', creado)
         return delegaciones
 
     # ------------------------------------------------------------------
@@ -194,26 +201,24 @@ class Command(BaseCommand):
         nombres = ["Encargado de Delegación", "Funcionario Municipal", "Verificador de Evidencias"]
         cargos = {}
         for nombre in nombres:
-            cargo, creado = Cargo.objects.get_or_create(nombre=nombre)
+            cargo, creado = Position.objects.get_or_create(name=nombre)
             cargos[nombre] = cargo
             self._log("Cargo", nombre, creado)
         return cargos
 
     # ------------------------------------------------------------------
-    # Usuarios -- Decision 5 (los 3 exactos) + Decision 6 (Funcionario
-    # propio del Administrador, capa 1 del caso borde de request.user.funcionario)
+    # Usuarios -- Decision 5 (los 3 exactos) + Decision 6 (Employee
+    # propio del Administrador, capa 1 del caso borde de
+    # request.user.employee)
     #
-    # NOTA: Funcionario.nombre es CharField obligatorio (sin default) en el
-    # models.py real -- se agrega explícito en los 3 bloques de abajo. En la
-    # version anterior de este comando faltaba en los 3 y habria fallado con
-    # NOT NULL constraint failed: core_funcionario.nombre justo despues de
-    # resolver el bug de Evidencia.fecha.
+    # NOTA: Employee.name es CharField obligatorio (sin default) en el
+    # models.py real -- se agrega explícito en los 3 bloques de abajo.
     # ------------------------------------------------------------------
     def _crear_usuarios(self, password, grupos, delegaciones, cargos):
         deleg_centro = delegaciones["DEL-001"]
         deleg_norte = delegaciones["DEL-002"]
 
-        # --- Administrador: superuser + Funcionario propio (Decision 6) ---
+        # --- Administrador: superuser + Employee propio (Decision 6) ---
         admin_user, creado = User.objects.get_or_create(
             username="admin_sgr",
             defaults=dict(email="admin@sgr.local", is_staff=True, is_superuser=True),
@@ -230,13 +235,13 @@ class Command(BaseCommand):
         admin_user.groups.add(grupos["Administrador"])
         self._log("Usuario", "admin_sgr (superuser)", creado)
 
-        admin_funcionario, creado = Funcionario.objects.get_or_create(
+        admin_funcionario, creado = Employee.objects.get_or_create(
             user=admin_user,
             defaults=dict(
-                id_institucional="FUNC-ADMIN-001",
-                nombre="Administrador General SGR",
-                delegacion=deleg_centro,
-                cargo=cargos["Encargado de Delegación"],
+                institutional_id="FUNC-ADMIN-001",
+                name="Administrador General SGR",
+                delegation=deleg_centro,
+                position=cargos["Encargado de Delegación"],
             ),
         )
         self._log("Funcionario (admin)", "FUNC-ADMIN-001", creado)
@@ -254,22 +259,22 @@ class Command(BaseCommand):
         func_user.groups.add(grupos["Funcionario"])
         self._log("Usuario", "funcionario_demo", creado)
 
-        funcionario_demo, creado = Funcionario.objects.get_or_create(
+        funcionario_demo, creado = Employee.objects.get_or_create(
             user=func_user,
             defaults=dict(
-                id_institucional="FUNC-DEMO-001",
-                nombre="Funcionario Demo Norte",
-                delegacion=deleg_norte,
-                cargo=cargos["Funcionario Municipal"],
+                institutional_id="FUNC-DEMO-001",
+                name="Funcionario Demo Norte",
+                delegation=deleg_norte,
+                position=cargos["Funcionario Municipal"],
             ),
         )
         self._log("Funcionario", "FUNC-DEMO-001", creado)
 
         # --- Verificador de prueba (Decision 5: staff, grupo Verificador;
-        # Decision 6 no exige Funcionario propio para este rol -- solo lo
+        # Decision 6 no exige Employee propio para este rol -- solo lo
         # exige explícitamente para el Administrador. Se crea igual aquí
-        # porque Actividad.funcionario y el resto de la cadena de scoping
-        # de Fase 6 pasan por Funcionario, y sin fila propia el Verificador
+        # porque Activity.employee y el resto de la cadena de scoping
+        # de Fase 6 pasan por Employee, y sin fila propia el Verificador
         # no tendría delegación con la que operar en esa fase) ---
         verif_user, creado = User.objects.get_or_create(
             username="verificador_demo",
@@ -282,13 +287,13 @@ class Command(BaseCommand):
         verif_user.groups.add(grupos["Verificador"])
         self._log("Usuario", "verificador_demo", creado)
 
-        verificador_funcionario, creado = Funcionario.objects.get_or_create(
+        verificador_funcionario, creado = Employee.objects.get_or_create(
             user=verif_user,
             defaults=dict(
-                id_institucional="FUNC-VERIF-001",
-                nombre="Verificador Demo Centro",
-                delegacion=deleg_centro,
-                cargo=cargos["Verificador de Evidencias"],
+                institutional_id="FUNC-VERIF-001",
+                name="Verificador Demo Centro",
+                delegation=deleg_centro,
+                position=cargos["Verificador de Evidencias"],
             ),
         )
         self._log("Funcionario (verificador)", "FUNC-VERIF-001", creado)
@@ -303,81 +308,83 @@ class Command(BaseCommand):
         }
 
     # ------------------------------------------------------------------
-    # Periodo -- FK obligatoria de Actividad (Decision 1)
+    # Periodo -- FK obligatoria de Activity (Decision 1)
     # ------------------------------------------------------------------
     def _crear_periodo(self):
-        # Campos reales de tu Periodo (no nombre/fecha_inicio/fecha_termino/estado bool):
-        # inicio, termino, dias_computables, estado (CharField), umbral_ambar,
-        # umbral_colectivo, version_parametros.
-        periodo, creado = Periodo.objects.get_or_create(
-            inicio=date(2026, 7, 1),
-            termino=date(2026, 12, 31),
+        # Campos reales de tu Period (no name/fecha_inicio/fecha_termino/estado bool):
+        # start_date, end_date, computable_days, status (CharField),
+        # amber_threshold, collective_threshold, parameters_version.
+        periodo, creado = Period.objects.get_or_create(
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 12, 31),
             defaults=dict(
-                dias_computables=184,
-                estado="Vigente",
-                umbral_ambar=70.00,
-                umbral_colectivo=85.00,
-                version_parametros=1,
+                computable_days=184,
+                status="Vigente",
+                amber_threshold=70.00,
+                collective_threshold=85.00,
+                parameters_version=1,
             ),
         )
-        self._log("Periodo", f"{periodo.inicio} a {periodo.termino}", creado)
+        self._log("Periodo", f"{periodo.start_date} a {periodo.end_date}", creado)
         return periodo
 
     # ------------------------------------------------------------------
-    # Actividades -- repartidas entre las 2 delegaciones (via funcionario),
+    # Actividades -- repartidas entre las 2 delegaciones (via employee),
     # usando SOLO los valores normalizados de Decision 4 en los 4 campos
     # de texto libre, para no ensuciar list_filter en Fase 4.
-    # related_name real: Actividad.funcionario (Decision 10) -- no "autor".
-    # Campo real de solicitud: solicitud_problema (no "solicitud"). accion
-    # y estado son obligatorios sin default en tu modelo -- se agregan aqui.
+    # related_name real: Activity.employee (Decision 10) -- no "autor".
+    # Campo real de solicitud: request_description (no "solicitud").
+    # action_taken y status son obligatorios sin default en tu modelo --
+    # se agregan aqui.
     # ------------------------------------------------------------------
     def _crear_actividades(self, usuarios, periodo):
         datos = [
             dict(
-                funcionario=usuarios["admin_funcionario"],
-                periodo=periodo,
-                fecha=date(2026, 8, 5),
-                tipo_actividad=TIPO_ACTIVIDAD[0],
-                servicio=SERVICIO[0],
-                atencion=TIPO_ATENCION[0],
-                subatencion=SUB_ATENCION[0],
-                solicitud_problema="Solicitud de informe social — sector centro",
-                accion="Se recopilan antecedentes y se elabora informe social.",
-                estado="Pendiente",
+                employee=usuarios["admin_funcionario"],
+                period=periodo,
+                date=date(2026, 8, 5),
+                activity_type=TIPO_ACTIVIDAD[0],
+                service=SERVICIO[0],
+                attention=TIPO_ATENCION[0],
+                sub_attention=SUB_ATENCION[0],
+                request_description="Solicitud de informe social — sector centro",
+                action_taken="Se recopilan antecedentes y se elabora informe social.",
+                status="Pendiente",
             ),
             dict(
-                funcionario=usuarios["funcionario_demo"],
-                periodo=periodo,
-                fecha=date(2026, 8, 12),
-                tipo_actividad=TIPO_ACTIVIDAD[1],
-                servicio=SERVICIO[1],
-                atencion=TIPO_ATENCION[1],
-                subatencion=SUB_ATENCION[1],
-                solicitud_problema="Seguimiento de subsidio — sector norte",
-                accion="Se realiza seguimiento telefónico del estado del subsidio.",
-                estado="Pendiente",
+                employee=usuarios["funcionario_demo"],
+                period=periodo,
+                date=date(2026, 8, 12),
+                activity_type=TIPO_ACTIVIDAD[1],
+                service=SERVICIO[1],
+                attention=TIPO_ATENCION[1],
+                sub_attention=SUB_ATENCION[1],
+                request_description="Seguimiento de subsidio — sector norte",
+                action_taken="Se realiza seguimiento telefónico del estado del subsidio.",
+                status="Pendiente",
             ),
         ]
         actividades = []
         for d in datos:
-            actividad, creado = Actividad.objects.get_or_create(
-                funcionario=d["funcionario"],
-                fecha=d["fecha"],
-                solicitud_problema=d["solicitud_problema"],
+            actividad, creado = Activity.objects.get_or_create(
+                employee=d["employee"],
+                date=d["date"],
+                request_description=d["request_description"],
                 defaults=d,
             )
             actividades.append(actividad)
-            self._log("Actividad", d["solicitud_problema"], creado)
+            self._log("Actividad", d["request_description"], creado)
         return actividades
 
     # ------------------------------------------------------------------
-    # Evidencias -- FileField real (Decision 7). Evidencia.codigo es PK
+    # Evidencias -- FileField real (Decision 7). Evidence.code es PK
     # natural string (Decision 11) -- se asigna explícito, no autogenerado.
     #
-    # NOTA: Evidencia.fecha es DateField obligatorio (sin default) en el
-    # models.py real -- se agrega explícito como fecha=actividad.fecha
+    # NOTA: Evidence.date es DateField obligatorio (sin default) en el
+    # models.py real -- se agrega explícito como date=actividad.date
     # (la evidencia se sube el mismo día de la actividad). Este era el bug
-    # original reportado: NOT NULL constraint failed: core_evidencia.fecha.
+    # original reportado: NOT NULL constraint failed: core_evidencia.fecha
+    # (ahora performance_evidence.date, mismo bug ya resuelto).
     # ------------------------------------------------------------------
     def _crear_evidencias(self, actividades):
         archivos_disponibles = sorted(SEED_FILES_DIR.glob("*.pdf"))
@@ -394,76 +401,76 @@ class Command(BaseCommand):
         for i, actividad in enumerate(actividades, start=1):
             codigo = f"EVID-{i:03d}"
             nombre_archivo = archivos_disponibles[(i - 1) % len(archivos_disponibles)].name
-            evidencia, creado = Evidencia.objects.get_or_create(
-                codigo=codigo,
+            evidencia, creado = Evidence.objects.get_or_create(
+                code=codigo,
                 defaults=dict(
-                    actividad=actividad,
-                    fecha=actividad.fecha,
-                    estado_revision="Pendiente",
+                    activity=actividad,
+                    date=actividad.date,
+                    review_status="Pendiente",
                 ),
             )
             if creado:
                 ruta = SEED_FILES_DIR / nombre_archivo
                 with ruta.open("rb") as f:
-                    evidencia.archivo.save(nombre_archivo, File(f), save=True)
+                    evidencia.file.save(nombre_archivo, File(f), save=True)
             evidencias.append(evidencia)
             self._log("Evidencia", codigo, creado)
         return evidencias
 
     # ------------------------------------------------------------------
-    # Validaciones -- al menos 1, para demostrar ValidacionInline en Fase 5.
-    # related_name real: Validacion.evidencia -> "validacion" (singular,
-    # relacion 1:0..1, Decision 3/10). Validacion.funcionario -> el
-    # verificador (Decision 8: Validacion.evidencia usa CASCADE, no PROTECT).
+    # Validaciones -- al menos 1, para demostrar ValidationInline en Fase 5.
+    # related_name real: Validation.evidence -> "validation" (singular,
+    # relacion 1:0..1, Decision 3/10). Validation.employee -> el
+    # verificador (Decision 8: Validation.evidence usa CASCADE, no PROTECT).
     #
     # Fase 6 (ajuste de seed, Bug 1): se valida evidencias[1] (EVID-002,
     # Actividad de funcionario_demo, Delegación Norte) en vez de
     # evidencias[0] como en la versión original. Motivo: verificador_demo
     # pertenece a Delegación Centro (ver _crear_usuarios), y el scoping por
-    # Delegación de Fase 6 (Decisión 6) hace que EvidenciaAdmin.get_queryset
-    # solo le muestre Evidencias de Centro -- es decir, solo EVID-001. Si
+    # Delegación de Fase 6 (Decisión 6) hace que EvidenceAdmin.get_queryset
+    # solo le muestre Evidences de Centro -- es decir, solo EVID-001. Si
     # esa fuera la que ya queda validada acá, verificador_demo no tendría
-    # ninguna Evidencia pendiente visible para probar en vivo la acción
+    # ninguna Evidence pendiente visible para probar en vivo la acción
     # "aprobar evidencias en lote" (Decisión 9): el único caso de éxito
     # real quedaría fuera de lo que su propio scoping le permite ver.
     # Validando en cambio EVID-002 (Norte), EVID-001 (Centro) queda
     # pendiente y demostrable con verificador_demo tal como pide la
     # Decisión 9 ("Sirve también para demostrar en vivo el criterio de
-    # seguridad"). No se agrega una tercera Evidencia ni se toca qué
+    # seguridad"). No se agrega una tercera Evidence ni se toca qué
     # Delegaciones/usuarios existen -- solo cuál de las dos evidencias ya
     # creadas queda con Validación previa.
     #
-    # Nota: esta Validación de EVID-002 (Norte) queda con funcionario =
+    # Nota: esta Validación de EVID-002 (Norte) queda con employee =
     # verificador_funcionario (Centro), igual que la versión original del
     # seed dejaba la de EVID-001 (Centro) con ese mismo verificador. El
     # scoping por Delegación de Fase 6 (Decisión 6) rige las acciones
-    # hechas EN VIVO a través del Django Admin -- ValidacionAdmin.
+    # hechas EN VIVO a través del Django Admin -- ValidationAdmin.
     # formfield_for_foreignkey / has_add_permission -- no una restricción
-    # a nivel de base de datos sobre Validacion.funcionario; este dato de
+    # a nivel de base de datos sobre Validation.employee; este dato de
     # prueba se crea directo por ORM en el seed, igual que el resto del
     # comando, y representa simplemente el historial ya existente al
     # momento en que arranca la demo.
     # ------------------------------------------------------------------
     def _crear_validaciones(self, evidencias, usuarios):
         if len(evidencias) < 2:
-            # Con 0 o 1 Evidencia no hay una segunda que validar sin dejar
+            # Con 0 o 1 Evidence no hay una segunda que validar sin dejar
             # a verificador_demo sin ningún caso pendiente en Centro; se
             # omite en vez de forzar el mismo problema que este ajuste
             # busca resolver (ver bloque de comentario arriba).
             return
         evidencia_a_validar = evidencias[1]
-        validacion, creado = Validacion.objects.get_or_create(
-            evidencia=evidencia_a_validar,
+        validacion, creado = Validation.objects.get_or_create(
+            evidence=evidencia_a_validar,
             defaults=dict(
-                funcionario=usuarios["verificador_funcionario"],
-                fecha=date(2026, 8, 20),
+                employee=usuarios["verificador_funcionario"],
+                date=date(2026, 8, 20),
                 decision="Aprobada",
-                resultado=True,
-                observacion="Evidencia conforme al respaldo solicitado.",
+                result=True,
+                notes="Evidencia conforme al respaldo solicitado.",
                 version=1,
             ),
         )
-        self._log("Validación", f"para {evidencia_a_validar.codigo}", creado)
+        self._log("Validación", f"para {evidencia_a_validar.code}", creado)
 
     # ------------------------------------------------------------------
     # Utilidades
