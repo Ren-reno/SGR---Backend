@@ -135,7 +135,7 @@ class ActivityAdmin(admin.ModelAdmin):
     )
     list_filter = ('employee__delegation', 'status', 'period')
     ordering = ('-date',)
-    list_select_related = ('employee', 'employee__delegation', 'period')
+    list_select_related = ('employee', 'employee__delegation', 'period', 'attention')
 
     # --- Fase 5, lo único que agrega esta fase ---
     inlines = [EvidenceInline]
