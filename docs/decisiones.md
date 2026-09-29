@@ -413,6 +413,37 @@ Se descartó permitir re-aprobar generando una segunda fila de `Validacion` por 
 
 ---
 
+### Decisión 20 — Login, logout y recuperación de contraseña por código de 6 dígitos (Fase 4)
+
+**Origen:** el requisito 4 de la rúbrica formativa pide login/logout con el sistema de autenticación de Django y recuperación por código numérico de 6 dígitos que no pueda reutilizarse, con contraseña nueva pedida dos veces y validada (mínimo 10, mayúscula, minúscula, número, carácter especial). La Decisión 13 dejó `accounts` vacía justamente para esto.
+
+**Decisión:**
+1. **Login/logout:** se heredan `LoginView`/`LogoutView` de `django.contrib.auth` (no se reescribe la autenticación). `LoginForm` hereda de `AuthenticationForm` solo para poner etiquetas en español. `LogoutView` acepta únicamente `POST` (comportamiento de Django ≥ 5.0), así que el cierre de sesión se envía desde un formulario con CSRF.
+2. **Modelo `PasswordResetCode`** (`accounts`): `user`, `code` (6 dígitos), `created_at`, `expires_at`, `used_at`, `failed_attempts`. El código se genera con `secrets.randbelow`, no con `random`.
+3. **Reglas del código:** vence a los 10 min (`CODE_TTL_MINUTES`); un solo uso (`used_at`); pedir uno nuevo invalida los pendientes del usuario, así que nunca hay dos vivos; se bloquea a los 5 intentos fallidos (`MAX_ATTEMPTS`).
+4. **Mecanismo de demo (paso 4.3 del plan):** sin correo real. El código se muestra en pantalla **solo si `settings.DEBUG`** y siempre queda visible en el Admin. Con `DEBUG=False` no llega a la respuesta HTTP (hay test que lo verifica).
+5. **Validación de contraseña con mecanismos de Django:** `validate_password()` contra `AUTH_PASSWORD_VALIDATORS`. Se registran dos validadores en `accounts/validators.py`: `SpanishMinimumLengthValidator` (hereda `MinimumLengthValidator`, `min_length=10`, solo traduce el mensaje) y `PasswordComplexityValidator` (mayúscula, minúscula, número, especial). El largo lo valida un único validador, para no mostrar el error duplicado. Al ir en settings, la regla también rige en el Admin, no solo en esta pantalla.
+6. **Templates:** primeros `.html` del proyecto. `templates/base.html` (nivel proyecto, `DIRS` en settings) queda como base compartida para el CRUD web de la Fase 6 y SweetAlert2 de la Fase 7; los 4 templates de `accounts` viven en `accounts/templates/accounts/`. Sin CDN ni framework CSS, para que funcione en un despliegue sin salida a internet.
+7. **Admin:** `PasswordResetCode` es de **solo lectura** (sin agregar ni editar; sí se puede borrar para limpiar).
+
+**Justificación:**
+- **Por qué no se hashea el código:** un código de 6 dígitos tiene 10⁶ combinaciones; guardarlo hasheado se rompe por fuerza bruta en milisegundos, así que no aporta protección. La defensa real es expiración corta + un solo uso + tope de intentos + generación con CSPRNG. Se comparan en tiempo constante (`hmac.compare_digest`).
+- **Mensaje de error único:** si el usuario no existe, el código es incorrecto, venció o ya se usó, el formulario responde exactamente lo mismo; y "olvidé mi contraseña" responde igual exista o no la cuenta. Distinguirlos permitiría enumerar usuarios o saber que se acertó el usuario.
+- **Los intentos se cuentan contra el código y no contra la IP:** no depende de infraestructura ni de un cache externo, y funciona igual en el despliegue de AWS Academy.
+- **Validar la contraseña solo después de aceptar el código:** no se gasta un intento del código por una contraseña débil (el código no se consume si la contraseña es rechazada, para poder reintentar), y no se hace trabajo de validación para quien aún no probó ser el dueño.
+- **Admin solo lectura:** poder crear o editar un código a mano permitiría fijar uno conocido y tomar la cuenta de otro usuario sin pasar por el flujo.
+- **Validador propio y no un paquete de terceros:** existen paquetes (`django-advanced-password-validation`, etc.), pero cada dependencia nueva es algo más que explicar en la defensa oral y un riesgo en el despliegue; la API de validadores de Django alcanza con ~40 líneas.
+- **No se cambia `LANGUAGE_CODE`** a `es`: afectaría al Admin completo y no es alcance de esta fase. Por eso el validador de largo se subclasifica solo para traducir el mensaje.
+
+**Limitaciones conocidas (no resueltas a propósito):**
+- Las cuentas de prueba del seed (`sgr-demo-2026`) **no cumplen** la regla de complejidad, porque `set_password()` no pasa por los validadores. La regla se aplica al *cambiar* la contraseña. Si el docente exigiera que las de demo también la cumplan, basta con pasar `--password` al seed con una que sí cumpla.
+- No hay límite de solicitudes de códigos por usuario ni por IP (alguien podría generar códigos en bucle). Cada solicitud invalida la anterior, así que no acumula códigos vivos, pero llena la tabla. Mitigarlo requiere throttling (cache o similar), fuera del alcance de esta fase.
+- `PasswordResetCode` no usa borrado lógico: son registros de seguridad efímeros, no una entidad de negocio "eliminable" en el sentido de la Fase 3.
+
+**Alternativa descartada:** `PasswordResetView` y compañía de Django. Se descartó porque implementan el flujo con **enlace firmado por correo**, no con código numérico de 6 dígitos, que es lo que pide la rúbrica.
+
+---
+
 ## Verificación de alcance contra la rúbrica
 
 Las 7 entidades escogidas (Delegación, Cargo, Funcionario, Período, Actividad, Evidencia, Validación) fueron confirmadas como necesarias y suficientes para cada criterio de esta evaluación:
@@ -459,7 +490,7 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 - [x] ~~Definir `related_name` de cada FK~~ → resuelto: convención plural/singular según cardinalidad, ver Decisión 10.
 - [x] ~~**Nuevo, detectado en revisión cruzada de Fase 4/5/6:** definir si `Validacion` puede borrarse desde el Admin~~ → resuelto: nadie puede borrarla, ni siquiera `admin_sgr` (ver Decisión 12).
 - [x] ~~**Nuevo, por evaluación formativa 2.1.1–2.1.4:** renombrar a inglés las 7 entidades de esta entrega y decidir la partición en apps Django~~ → resuelto: ver Decisión 13 (`accounts` / `organization` / `performance`).
-- [ ] **Nuevo, por evaluación formativa 2.1.1–2.1.4:** diseñar e implementar login, logout y recuperación de contraseña por código de 6 dígitos (vive en `accounts`, que quedó sin modelos por la Decisión 13). Asignado como pieza de trabajo aparte de los 8 módulos del dominio completo — sin dueño confirmado todavía dentro del equipo.
+- [x] ~~**Nuevo, por evaluación formativa 2.1.1–2.1.4:** diseñar e implementar login, logout y recuperación de contraseña por código de 6 dígitos (vive en `accounts`, que quedó sin modelos por la Decisión 13). Asignado como pieza de trabajo aparte de los 8 módulos del dominio completo — sin dueño confirmado todavía dentro del equipo.~~ → **resuelto en la Fase 4**: ver Decisión 20.
 - [ ] **Nuevo, por evaluación formativa 2.1.1–2.1.4:** definir qué entidades son "eliminables" (con `deleted_at` o equivalente) y el patrón de manager/queryset para excluirlas de listados normales — todavía no implementado en ninguna de las 7 entidades actuales, y la lista de candidatas crece con la Decisión 14 (probablemente sume `Compromiso`).
 - [ ] **Nuevo, Decisión 14, sin confirmar por el docente (no tratar como resuelto):** si `Indicador` se persiste como tabla o se calcula al vuelo. Solo hay recomendación de tabla persistida con recálculo vía `services.py`.
 - [ ] **Nuevo, Decisión 14, sin confirmar por el docente (no tratar como resuelto):** fuente de verdad de `Compromiso.delegacion` — FK directa vs. inferida del responsable. Solo hay sugerencia de que la FK directa sea la fuente de verdad, validada con `clean()`. **Implementada así en la Fase 2 (Decisión 17), pero sigue sin confirmar por el docente.**
@@ -472,3 +503,5 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 - [ ] **Nuevo, Decisión 18:** cuando se implemente el borrado lógico (Fase 3), `Commitment` debe incluirse entre las entidades "eliminables"; hoy no se puede borrar de ninguna forma desde el Admin.
 - [ ] **Nuevo, Decisión 17:** mecanismo de "excepción formalmente configurada" de RN-001 (suma de ponderadores = 100%) — no definido en ningún documento del proyecto; hoy `clean()` solo exige que no supere 100%.
 - [ ] **Nuevo, Decisión 15:** repartir entre el equipo cuál de las 3 nuevas entidades (`Meta`, `ElementoCatalogo`, `Compromiso`) construye cada integrante — sin fijar todavía, análogo al pendiente de reparto de la Decisión 14 pero para el alcance de esta entrega formativa, no el de Eva 3.
+- [ ] **Nuevo, Decisión 20:** las cuentas de prueba del seed (`sgr-demo-2026`) no cumplen la regla de complejidad de contraseña. Decidir si se cambia el default de `--password` para que sí la cumplan, o se deja así (la regla solo aplica al cambiar contraseña).
+- [ ] **Nuevo, Decisión 20:** no hay límite de solicitudes de código de recuperación por usuario/IP (throttling). Solo se limitan los intentos de *adivinar* un código, no los de *pedirlo*.

@@ -71,8 +71,45 @@ python manage.py seed_sgr
 ```powershell
 python manage.py runserver
 ```
-Entrar a **http://127.0.0.1:8000/admin/** (no a `http://127.0.0.1:8000/` sin más — este backend
-no tiene una vista pública en la raíz, solo el Django Admin, así que `/` da 404 por diseño).
+Rutas disponibles:
+
+| Ruta | Qué es |
+|---|---|
+| `/accounts/login/` | Inicio de sesión |
+| `/accounts/logout/` | Cierre de sesión (solo `POST`; se dispara con el botón "Cerrar sesión") |
+| `/accounts/forgot-password/` | Recuperación de contraseña, paso 1: generar el código |
+| `/accounts/reset-password/` | Recuperación de contraseña, paso 2: código + contraseña nueva |
+| `/admin/` | Django Admin |
+
+Tras iniciar sesión se llega al Admin. `http://127.0.0.1:8000/` sin más da 404 por diseño: todavía
+no hay una página de inicio propia (llega con el CRUD web de la Fase 6).
+
+## Recuperación de contraseña
+
+Flujo por código numérico de 6 dígitos (Decisión 20 de `docs/decisiones.md`):
+
+1. Ir a `/accounts/forgot-password/` e ingresar el usuario.
+2. **Modo demo:** no se envía correo. Con `DEBUG=True` el código aparece **en pantalla**, y siempre
+   queda visible en el Admin (`Accounts › Password reset codes`, solo lectura). Con `DEBUG=False`
+   el código **nunca** llega a la respuesta HTTP (en un despliegue real se enviaría por correo).
+3. Ir a `/accounts/reset-password/`, ingresar usuario, código y la contraseña nueva **dos veces**.
+
+Reglas del código: vence a los **10 minutos**, es de **un solo uso** (tras una recuperación
+exitosa no sirve de nuevo), pedir uno nuevo invalida el anterior, y se **bloquea a los 5 intentos
+fallidos**.
+
+Reglas de la contraseña nueva: mínimo **10 caracteres**, con **mayúscula, minúscula, número y
+carácter especial**. Se guarda hasheada (PBKDF2 de Django), nunca en texto plano.
+
+> Las contraseñas de las cuentas de prueba de abajo (`sgr-demo-2026`) **no cumplen** esa regla a
+> propósito: el seed las fija con `set_password()`, que no pasa por los validadores. La regla se
+> aplica al *cambiar* la contraseña, no al iniciar sesión. Tras recuperarla, la cuenta queda con una
+> contraseña que sí la cumple.
+
+## Pruebas automáticas
+```powershell
+python manage.py test
+```
 
 ## Cuentas de prueba
 
