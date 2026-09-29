@@ -66,17 +66,17 @@ PERMISOS_POR_GRUPO = {
         ("performance", "change_evidence"), ("performance", "delete_evidence"),
         ("performance", "view_validation"), ("performance", "add_validation"),
         ("performance", "change_validation"),
-        # delete_validation deliberadamente excluido: ValidationAdmin.
-        # has_delete_permission() (Fase 6 / Decisión 12) devuelve False
-        # para todos sin excepción, así que este permiso nunca se ejerce
-        # y no se otorga aunque el usuario sea Administrador.
+        # Fase 3 (Decisión 20): delete_validation y delete_commitment se
+        # otorgan SOLO a Administrador, el mismo criterio que ya tienen
+        # delete_activity y delete_evidence. Antes estaban excluidos porque
+        # el borrado era físico (Decisiones 12 y 18); ahora es lógico
+        # (deleted_at) y no destruye el rastro. Funcionario y Verificador
+        # siguen sin permiso de borrar.
+        ("performance", "delete_validation"),
         #
-        # Fase 2 (patch 5, Decisión 18): Commitment. delete_commitment
-        # deliberadamente excluido, igual que delete_validation: el borrado
-        # de compromisos será lógico (Fase 3, deleted_at), nunca físico
-        # desde el Admin -- ver CommitmentAdmin.has_delete_permission.
+        # Fase 2 (patch 5, Decisión 18): Commitment.
         ("performance", "view_commitment"), ("performance", "add_commitment"),
-        ("performance", "change_commitment"),
+        ("performance", "change_commitment"), ("performance", "delete_commitment"),
         # CatalogItem y Meta: solo Administrador (Decisión 18). La Guía
         # (sección 3) asigna al Administrador "catálogos, metas y
         # ponderaciones" como responsabilidad propia.
@@ -95,9 +95,10 @@ PERMISOS_POR_GRUPO = {
         ("performance", "view_evidence"), ("performance", "change_evidence"),
         # Fase 2 (patch 5, Decisión 18): Commitment. La Guía asigna al
         # Funcionario registrar compromisos (HU-12) y actualizar su
-        # estado (HU-13) -> view + add + change. Sin delete: el borrado
-        # será lógico (Fase 3). El acotamiento a su propia Delegación NO
-        # depende de estos permisos: lo impone CommitmentAdmin.
+        # estado (HU-13) -> view + add + change. Sin delete (Decisión 20:
+        # el borrado lógico es solo de Administrador). El acotamiento a su
+        # propia Delegación NO depende de estos permisos: lo impone
+        # CommitmentAdmin.
         ("performance", "view_commitment"), ("performance", "add_commitment"),
         ("performance", "change_commitment"),
     ],
@@ -105,7 +106,7 @@ PERMISOS_POR_GRUPO = {
         # Mismo acceso de lectura/edición que Funcionario sobre
         # Activity/Evidence (necesita verlas para poder aprobar
         # evidencias), más alta y edición de Validation -- sin
-        # delete_validation, mismo motivo que en Administrador arriba.
+        # delete_validation (Decisión 20: solo Administrador).
         ("performance", "view_activity"), ("performance", "change_activity"),
         ("performance", "view_evidence"), ("performance", "change_evidence"),
         ("performance", "view_validation"), ("performance", "add_validation"),
@@ -431,14 +432,15 @@ class Command(BaseCommand):
         ]
         actividades = []
         for d in datos:
-            actividad, creado = Activity.objects.get_or_create(
+            actividad, creado, restaurado = self._get_or_restore(
+                Activity,
                 employee=d["employee"],
                 date=d["date"],
                 request_description=d["request_description"],
                 defaults=d,
             )
             actividades.append(actividad)
-            self._log("Actividad", d["request_description"], creado)
+            self._log("Actividad", d["request_description"], creado, restaurado)
         return actividades
 
     # ------------------------------------------------------------------
@@ -466,7 +468,8 @@ class Command(BaseCommand):
         for i, actividad in enumerate(actividades, start=1):
             codigo = f"EVID-{i:03d}"
             nombre_archivo = archivos_disponibles[(i - 1) % len(archivos_disponibles)].name
-            evidencia, creado = Evidence.objects.get_or_create(
+            evidencia, creado, restaurado = self._get_or_restore(
+                Evidence,
                 code=codigo,
                 defaults=dict(
                     activity=actividad,
@@ -479,7 +482,7 @@ class Command(BaseCommand):
                 with ruta.open("rb") as f:
                     evidencia.file.save(nombre_archivo, File(f), save=True)
             evidencias.append(evidencia)
-            self._log("Evidencia", codigo, creado)
+            self._log("Evidencia", codigo, creado, restaurado)
         return evidencias
 
     # ------------------------------------------------------------------
@@ -524,7 +527,8 @@ class Command(BaseCommand):
             # busca resolver (ver bloque de comentario arriba).
             return
         evidencia_a_validar = evidencias[1]
-        validacion, creado = Validation.objects.get_or_create(
+        validacion, creado, restaurado = self._get_or_restore(
+            Validation,
             evidence=evidencia_a_validar,
             defaults=dict(
                 employee=usuarios["verificador_funcionario"],
@@ -535,13 +539,30 @@ class Command(BaseCommand):
                 version=1,
             ),
         )
-        self._log("Validación", f"para {evidencia_a_validar.code}", creado)
+        self._log("Validación", f"para {evidencia_a_validar.code}", creado, restaurado)
 
     # ------------------------------------------------------------------
     # Utilidades
     # ------------------------------------------------------------------
-    def _log(self, tipo, nombre, creado):
-        marca = "creado" if creado else "ya existía"
+    def _get_or_restore(self, modelo, defaults=None, **lookup):
+        # Decisión 20: `modelo.objects` no ve los registros eliminados
+        # lógicamente, así que get_or_create() no encontraba la fila
+        # escondida e intentaba crearla de nuevo (choque de clave primaria
+        # o UNIQUE en Evidence/Validation, duplicado en Activity). Se busca
+        # en all_objects y, si estaba eliminada, se restaura: el seed
+        # significa "deja los datos de la demo presentes".
+        obj, creado = modelo.all_objects.get_or_create(defaults=defaults, **lookup)
+        restaurado = False
+        if not creado and obj.deleted_at is not None:
+            obj.restore()
+            restaurado = True
+        return obj, creado, restaurado
+
+    def _log(self, tipo, nombre, creado, restaurado=False):
+        if restaurado:
+            marca = "restaurado"
+        else:
+            marca = "creado" if creado else "ya existía"
         self.stdout.write(f"  [{tipo}] {nombre} — {marca}")
 
     def _resumen(self, password):

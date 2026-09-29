@@ -2,8 +2,10 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import ProtectedError
 
 from organization.models import Delegation, Employee, Position
+from .soft_delete import SoftDeleteModel
 
 
 class Period(models.Model):
@@ -202,7 +204,7 @@ class Meta(models.Model):
         return f"Meta {self.item_name} — {self.position} ({self.period})"
 
 
-class Commitment(models.Model):
+class Commitment(SoftDeleteModel):
     """Antes Compromiso. Entidad nueva (Fase 2, paso 2.4). Campos según
     el glosario del proyecto (Guía para Estudiantes, sección 8:
     "Compromiso | Origen, solicitante, territorio, responsable, fecha,
@@ -323,7 +325,7 @@ class Commitment(models.Model):
         return f"Compromiso {self.pk} — {self.origin} ({self.get_status_display()})"
 
 
-class Activity(models.Model):
+class Activity(SoftDeleteModel):
     """Antes Actividad (Decisión 13). funcionario -> employee, periodo ->
     period, tipo_actividad -> activity_type, servicio -> service,
     atencion -> attention, subatencion -> sub_attention, fecha -> date,
@@ -391,8 +393,20 @@ class Activity(models.Model):
     def __str__(self):
         return f"Actividad {self.pk} — {self.activity_type}"
 
+    def _before_soft_delete(self):
+        # Decisión 20: el borrado lógico respeta el PROTECT de
+        # Evidence.activity (Decisión 8). `evidence_items` ya excluye las
+        # evidencias eliminadas, así que solo bloquean las vivas.
+        live_evidence = self.evidence_items.all()
+        if live_evidence.exists():
+            raise ProtectedError(
+                "No se puede eliminar la actividad porque tiene evidencias "
+                "asociadas. Elimine primero sus evidencias.",
+                set(live_evidence),
+            )
 
-class Evidence(models.Model):
+
+class Evidence(SoftDeleteModel):
     """Antes Evidencia (Decisión 13). codigo -> code, actividad -> activity,
     archivo -> file, fecha -> date, metadatos -> metadata,
     estado_revision -> review_status."""
@@ -408,8 +422,18 @@ class Evidence(models.Model):
     def __str__(self):
         return self.code
 
+    def _before_soft_delete(self):
+        # Decisión 20: Validation.evidence es CASCADE (Decisión 8: una
+        # Validation no tiene sentido sin su Evidence), así que eliminar una
+        # Evidence elimina también su Validation. Se consulta la base de
+        # datos (Validation.objects, solo vivas) y no `self.validation`:
+        # ese accesor guarda en caché el último objeto asignado, que puede
+        # ser una Validation sin guardar (típico al validar un formulario).
+        for validation in Validation.objects.filter(evidence=self):
+            validation.soft_delete()
 
-class Validation(models.Model):
+
+class Validation(SoftDeleteModel):
     """Antes Validacion (Decisión 13). evidencia -> evidence, funcionario ->
     employee, observacion -> notes, resultado -> result. decision y
     version ya estaban en inglés."""
