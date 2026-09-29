@@ -35,7 +35,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from organization.models import Delegation, Employee, Position
-from performance.models import Activity, Evidence, Period, Validation
+from performance.models import Activity, CatalogItem, Evidence, Period, Validation
 
 User = get_user_model()
 
@@ -70,6 +70,20 @@ PERMISOS_POR_GRUPO = {
         # has_delete_permission() (Fase 6 / Decisión 12) devuelve False
         # para todos sin excepción, así que este permiso nunca se ejerce
         # y no se otorga aunque el usuario sea Administrador.
+        #
+        # Fase 2 (patch 5, Decisión 18): Commitment. delete_commitment
+        # deliberadamente excluido, igual que delete_validation: el borrado
+        # de compromisos será lógico (Fase 3, deleted_at), nunca físico
+        # desde el Admin -- ver CommitmentAdmin.has_delete_permission.
+        ("performance", "view_commitment"), ("performance", "add_commitment"),
+        ("performance", "change_commitment"),
+        # CatalogItem y Meta: solo Administrador (Decisión 18). La Guía
+        # (sección 3) asigna al Administrador "catálogos, metas y
+        # ponderaciones" como responsabilidad propia.
+        ("performance", "view_catalogitem"), ("performance", "add_catalogitem"),
+        ("performance", "change_catalogitem"), ("performance", "delete_catalogitem"),
+        ("performance", "view_meta"), ("performance", "add_meta"),
+        ("performance", "change_meta"), ("performance", "delete_meta"),
     ],
     "Funcionario": [
         # Ve y edita sus propias Activities/Evidences (get_queryset ya
@@ -79,6 +93,13 @@ PERMISOS_POR_GRUPO = {
         # acceso a Validation en absoluto).
         ("performance", "view_activity"), ("performance", "change_activity"),
         ("performance", "view_evidence"), ("performance", "change_evidence"),
+        # Fase 2 (patch 5, Decisión 18): Commitment. La Guía asigna al
+        # Funcionario registrar compromisos (HU-12) y actualizar su
+        # estado (HU-13) -> view + add + change. Sin delete: el borrado
+        # será lógico (Fase 3). El acotamiento a su propia Delegación NO
+        # depende de estos permisos: lo impone CommitmentAdmin.
+        ("performance", "view_commitment"), ("performance", "add_commitment"),
+        ("performance", "change_commitment"),
     ],
     "Verificador": [
         # Mismo acceso de lectura/edición que Funcionario sobre
@@ -90,17 +111,32 @@ PERMISOS_POR_GRUPO = {
         ("performance", "view_validation"), ("performance", "add_validation"),
         ("performance", "change_validation"),
     ],
+    # "Verificador": sin permisos sobre Commitment (Decisión 18). La Guía
+    # le asigna revisar evidencias y validar o rechazar registros; un
+    # compromiso no es una evidencia.
+    #
     # "Delegado": sin permisos de modelo asignados en esta fase -- el plan
     # y la Decisión 6 no definen todavía qué puede hacer este rol en el
     # Admin; se deja el grupo creado (ya lo hacía Fase 3) pero vacío de
-    # permisos, en vez de inventar un alcance no pedido.
+    # permisos, en vez de inventar un alcance no pedido. La Decisión 18
+    # documenta por qué tampoco se crea un usuario delegado_demo ahora:
+    # la reasignación de responsable (HU-15, P2) es su única diferencia
+    # real frente a Funcionario y queda fuera del alcance formativo.
 }
 
 # Movido de core/fixtures/seed_files a performance/fixtures/seed_files
 # (Decisión 13): los archivos de ejemplo viajan con la app dueña de Evidence.
 SEED_FILES_DIR = Path(settings.BASE_DIR) / "performance" / "fixtures" / "seed_files"
 
-# Decision 4 -- valores de ejemplo ya definidos en decisiones.md, no inventar otros
+# Decision 4 -- valores de ejemplo ya definidos en decisiones.md, no inventar otros.
+#
+# Fase 2 (paso 2.1): TIPO_ATENCION ya NO se asigna directo como texto en
+# Activity.attention -- ese campo pasó a ser FK hacia CatalogItem. Los
+# nombres se mantienen acá igual (siguen siendo los valores de negocio
+# válidos, ver Decision 4) y se resuelven a su CatalogItem correspondiente
+# en _crear_catalogo_atencion(), reutilizando el mismo patrón de
+# get_or_create() que usa la migración de datos 0003 para no duplicar
+# filas del catálogo.
 TIPO_ATENCION = ["Informes Sociales", "Gestión de Subsidios", "Derivación"]
 SUB_ATENCION = ["Informe Aporte Económico", "Orientación Social", "PGU"]
 SERVICIO = ["Atención Presencial", "Atención Telefónica"]
@@ -126,7 +162,8 @@ class Command(BaseCommand):
             cargos = self._crear_cargos()
             usuarios = self._crear_usuarios(password, grupos, delegaciones, cargos)
             periodo = self._crear_periodo()
-            actividades = self._crear_actividades(usuarios, periodo)
+            catalogo_atencion = self._crear_catalogo_atencion()
+            actividades = self._crear_actividades(usuarios, periodo, catalogo_atencion)
             evidencias = self._crear_evidencias(actividades)
             self._crear_validaciones(evidencias, usuarios)
 
@@ -329,15 +366,43 @@ class Command(BaseCommand):
         return periodo
 
     # ------------------------------------------------------------------
+    # Catálogo de Tipo Atención (Fase 2, paso 2.1) -- CatalogItem
+    # reemplaza el CharField de texto libre que tenía Activity.attention.
+    # get_or_create() por (category, name) es idempotente frente al
+    # UniqueConstraint del modelo (Decision 8: correrlo varias veces no
+    # debe fallar ni duplicar), igual patrón que el resto del comando.
+    # Solo se crean acá los 2 valores que usa TIPO_ATENCION en las
+    # actividades de ejemplo de abajo -- si una migración anterior (0003)
+    # ya corrió sobre esta misma base y cargó el catálogo completo de la
+    # Decision 4, get_or_create() no duplica nada, solo reutiliza esas
+    # filas.
+    # ------------------------------------------------------------------
+    def _crear_catalogo_atencion(self):
+        catalogo = {}
+        for nombre in TIPO_ATENCION:
+            item, creado = CatalogItem.objects.get_or_create(
+                category=CatalogItem.CATEGORY_ATTENTION, name=nombre
+            )
+            catalogo[nombre] = item
+            self._log("CatalogItem (attention)", nombre, creado)
+        return catalogo
+
+    # ------------------------------------------------------------------
     # Actividades -- repartidas entre las 2 delegaciones (via employee),
     # usando SOLO los valores normalizados de Decision 4 en los 4 campos
-    # de texto libre, para no ensuciar list_filter en Fase 4.
+    # de clasificación, para no ensuciar list_filter en Fase 4.
     # related_name real: Activity.employee (Decision 10) -- no "autor".
     # Campo real de solicitud: request_description (no "solicitud").
     # action_taken y status son obligatorios sin default en tu modelo --
     # se agregan aqui.
+    #
+    # Fase 2 (paso 2.1): `attention` ya no recibe el string de
+    # TIPO_ATENCION directo -- recibe el CatalogItem resuelto por
+    # _crear_catalogo_atencion(), porque el campo pasó a ser FK.
+    # activity_type, service y sub_attention siguen siendo texto libre sin
+    # cambios (ver docstring de CatalogItem en models.py).
     # ------------------------------------------------------------------
-    def _crear_actividades(self, usuarios, periodo):
+    def _crear_actividades(self, usuarios, periodo, catalogo_atencion):
         datos = [
             dict(
                 employee=usuarios["admin_funcionario"],
@@ -345,7 +410,7 @@ class Command(BaseCommand):
                 date=date(2026, 8, 5),
                 activity_type=TIPO_ACTIVIDAD[0],
                 service=SERVICIO[0],
-                attention=TIPO_ATENCION[0],
+                attention=catalogo_atencion[TIPO_ATENCION[0]],
                 sub_attention=SUB_ATENCION[0],
                 request_description="Solicitud de informe social — sector centro",
                 action_taken="Se recopilan antecedentes y se elabora informe social.",
@@ -357,7 +422,7 @@ class Command(BaseCommand):
                 date=date(2026, 8, 12),
                 activity_type=TIPO_ACTIVIDAD[1],
                 service=SERVICIO[1],
-                attention=TIPO_ATENCION[1],
+                attention=catalogo_atencion[TIPO_ATENCION[1]],
                 sub_attention=SUB_ATENCION[1],
                 request_description="Seguimiento de subsidio — sector norte",
                 action_taken="Se realiza seguimiento telefónico del estado del subsidio.",

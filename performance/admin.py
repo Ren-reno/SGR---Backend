@@ -2,8 +2,8 @@ from datetime import date
 
 from django.contrib import admin, messages
 
-from organization.models import Employee
-from .models import Period, Activity, Evidence, Validation
+from organization.models import Delegation, Employee
+from .models import Period, CatalogItem, Meta, Commitment, Activity, Evidence, Validation
 
 
 def _unrestricted(request):
@@ -122,11 +122,137 @@ class PeriodAdmin(admin.ModelAdmin):
     ordering = ('-start_date',)
 
 
+# --- Fase 2, paso 2.5: registro de CatalogItem, Meta y Commitment ---
+# Mismo patrón que ya usan organization/admin.py y el resto de este
+# archivo: list_display, search_fields, list_filter, ordering, y
+# list_select_related cuando hay FK involucradas. Los tres se registran
+# juntos en este paso porque los tres modelos ya existen a esta altura
+# del plan de trabajo (pasos 2.1, 2.2/2.3 y 2.4 respectivamente) -- no
+# porque tengan relación funcional entre sí.
+#
+# Permisos (decisión pendiente, no un olvido): seed_sgr.py NO otorga a
+# los grupos Delegado/Funcionario/Verificador ningún permiso de modelo
+# sobre CatalogItem, Meta ni Commitment, así que hoy solo el superusuario
+# puede verlas y gestionarlas desde el Admin (los demás reciben 403).
+# Definir quién gestiona el catálogo, las metas y los compromisos de cada
+# delegación es una decisión de negocio que además se cruza con el
+# scoping por Delegación de la Fase 5 -- no se inventa acá.
+
+@admin.register(CatalogItem)
+class CatalogItemAdmin(admin.ModelAdmin):
+    # Fase 5 y 6 extienden esta clase — no la dupliques
+    #
+    # `category` en list_filter: hoy solo existe la categoría 'attention'
+    # (paso 2.1), pero el propio modelo está pensado para crecer con más
+    # categorías en Eva 3 (sub_attention, service, activity_type) -- el
+    # filtro por categoría es lo que hace útil el listado cuando eso
+    # ocurra, no solo para el estado actual con una sola categoría.
+    list_display = ('name', 'category', 'is_active')
+    search_fields = ('name',)
+    list_filter = ('category', 'is_active')
+    ordering = ('category', 'name')
+
+
+@admin.register(Meta)
+class MetaAdmin(admin.ModelAdmin):
+    # Fase 5 y 6 extienden esta clase — no la dupliques
+    list_display = ('item_name', 'position', 'period', 'target_value', 'unit', 'weight')
+    search_fields = ('item_name',)
+    list_filter = ('position', 'period')
+    ordering = ('period', 'position', 'item_name')
+    list_select_related = ('position', 'period')
+
+
+@admin.register(Commitment)
+class CommitmentAdmin(admin.ModelAdmin):
+    # Fase 5 y 6 extienden esta clase — no la dupliques
+    #
+    # list_filter sigue el mismo criterio que ActivityAdmin más abajo
+    # (employee__delegation, status, period): status primero porque RF-018
+    # fija un conjunto cerrado de 4 valores, ideal para filtrar: y
+    # delegation/due_date porque HU-14 ("monitorear compromisos
+    # pendientes... por delegación") y HU-12 ("acotar por... rango de
+    # fechas") ya piden exactamente esas dos formas de acotar la lista.
+    list_display = (
+        'id', 'origin', 'requester', 'territory', 'responsible',
+        'delegation', 'due_date', 'status',
+    )
+    search_fields = (
+        'origin', 'requester', 'territory', 'observation',
+        'responsible__name', 'responsible__institutional_id',
+    )
+    list_filter = ('status', 'delegation', 'due_date')
+    ordering = ('-due_date',)
+    list_select_related = ('delegation', 'responsible')
+
+    # --- Patch 5 (Decisión 18): scoping por Delegación y permisos ---
+    # Mismo patrón que ActivityAdmin, con la diferencia de que el filtro
+    # es directo sobre Commitment.delegation (fuente de verdad, Decisión
+    # de diseño del paso 2.4) y no por employee__delegation. Se filtra por
+    # la delegación propia del compromiso, no por la de su responsable
+    # actual: si HU-15 reasignara el responsable a otra delegación, el
+    # compromiso seguiría visible para la delegación que lo originó.
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        delegation = _user_delegation(request)
+        if delegation is None:
+            return qs
+        if delegation is _NO_EMPLOYEE:
+            # Bug 2 (ver _NoEmployee): sin Employee no hay Delegación
+            # contra la cual comparar -> ningún registro, no todos.
+            return qs.none()
+        return qs.filter(delegation=delegation)
+
+    def has_change_permission(self, request, obj=None):
+        if not super().has_change_permission(request, obj):
+            return False
+        if obj is None:
+            return True  # obj=None es la vista de lista, no un registro puntual
+        delegation = _user_delegation(request)
+        if delegation is None:
+            return True
+        if delegation is _NO_EMPLOYEE:
+            return False
+        return obj.delegation_id == delegation.pk
+
+    def has_delete_permission(self, request, obj=None):
+        # Decisión 18: no se permite borrado físico de Commitment desde el
+        # Admin, ni siquiera a Administrador. Mismo criterio que
+        # ValidationAdmin (Decisión 12): conservar el rastro. El borrado
+        # será lógico (deleted_at) al implementarse la Fase 3.
+        return False
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        # Sin esto, un Funcionario de una Delegación podía crear un
+        # compromiso asignado a otra: has_add_permission solo valida el
+        # permiso de modelo, no la delegación (en el alta todavía no hay
+        # `obj` contra el cual comparar). Se limitan las dos FK que
+        # determinan el ámbito. clean() ya exige que responsible.delegation
+        # coincida con delegation, así que ambos desplegables se acotan a
+        # la misma Delegación del usuario.
+        delegation = _user_delegation(request)
+        if db_field.name == 'delegation':
+            if delegation is _NO_EMPLOYEE:
+                kwargs['queryset'] = Delegation.objects.none()
+            elif delegation is not None:
+                kwargs['queryset'] = Delegation.objects.filter(pk=delegation.pk)
+        if db_field.name == 'responsible':
+            if delegation is _NO_EMPLOYEE:
+                kwargs['queryset'] = Employee.objects.none()
+            elif delegation is not None:
+                kwargs['queryset'] = Employee.objects.filter(delegation=delegation)
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+
 @admin.register(Activity)
 class ActivityAdmin(admin.ModelAdmin):
     # Fase 5 y 6 extienden esta clase — no la dupliques
+    #
+    # Fase 2 (paso 2.3): `meta` se agrega a list_display y
+    # list_select_related -- mismo criterio que period/employee: mostrar
+    # la relación en el listado y evitar N+1 al resolver su __str__.
     list_display = (
-        'id', 'date', 'employee', 'period', 'activity_type',
+        'id', 'date', 'employee', 'period', 'meta', 'activity_type',
         'attention', 'sub_attention', 'service', 'status',
     )
     search_fields = (
@@ -135,7 +261,7 @@ class ActivityAdmin(admin.ModelAdmin):
     )
     list_filter = ('employee__delegation', 'status', 'period')
     ordering = ('-date',)
-    list_select_related = ('employee', 'employee__delegation', 'period')
+    list_select_related = ('employee', 'employee__delegation', 'period', 'meta', 'attention')
 
     # --- Fase 5, lo único que agrega esta fase ---
     inlines = [EvidenceInline]

@@ -87,13 +87,31 @@ repositorio (Decisión 5 de `docs/decisiones.md`).
 
 La contraseña se puede cambiar al correr el seed con `python manage.py seed_sgr --password <otra>`.
 
+### Qué puede hacer cada usuario en el Admin
+
+Sale de la tabla de actores de la Guía (sección 3); el detalle y la justificación están en la
+Decisión 18 de `docs/decisiones.md`.
+
+| Modelo | `admin_sgr` (Administrador) | `funcionario_demo` (Funcionario) | `verificador_demo` (Verificador) |
+|---|---|---|---|
+| `Activity`, `Evidence` | todo | ver y editar, solo de su Delegación | ver y editar, solo de su Delegación |
+| `Validation` | ver, agregar, editar | sin acceso | ver, agregar, editar |
+| `Commitment` | ver, agregar, editar (todas las Delegaciones) | ver, agregar, editar, **solo de su Delegación** | sin acceso |
+| `Meta`, `CatalogItem` | control total | sin acceso | sin acceso |
+
+Nadie puede borrar `Validation` ni `Commitment` desde el Admin, ni siquiera el Administrador
+(Decisiones 12 y 18): el borrado de compromisos será lógico.
+
+Un `403` al abrir `Meta` o `CatalogItem` con `funcionario_demo` **no es un error**: son datos de
+configuración que la Guía reserva al Administrador.
+
 ## Documentación del proyecto
 
 Documentación interna del equipo, en `docs/`:
 
 | Documento | Contenido |
 |---|---|
-| `docs/decisiones.md` | Decisiones de diseño y alcance de esta entrega (7 entidades), con alternativas descartadas y su justificación |
+| `docs/decisiones.md` | Decisiones de diseño y alcance de esta entrega (10 entidades, Decisión 15), con alternativas descartadas y su justificación |
 | `docs/Plan_Proyecto_SGR_Fusionado.md` | Plan de trabajo por fases y reparto real del equipo |
 | `docs/Guia_Proyecto_Software_SGR_Alumnos.md` | Documento fuente completo del caso SGR (MVP completo, 23 HU). No describe el alcance de este repo — se incluye por trazabilidad. Para el alcance real de esta entrega, ver `decisiones.md` |
 | `docs/enunciado.md` | Enunciado completo de la Evaluación Sumativa II (rúbrica, criterios y requerimientos de las 100 pts) — la Fase 1 de este repo cubre el criterio "Conexión BD + Migraciones" (9 pts) |
@@ -121,7 +139,9 @@ catálogo cerrado).
 
 Fuente editable: [`docs/assets/mer_general_mvp.puml`](docs/assets/mer_general_mvp.puml).
 Diseño de referencia para entregas futuras (incluye `Función`, `CargoFuncion`, `Meta`,
-`ElementoCatalogo`, `Compromiso`, `Indicador`, `Auditoría`) — **no** es el alcance de este repo.
+`ElementoCatalogo`, `Compromiso`, `Indicador`, `Auditoría`). De esas 7, `Meta`, `ElementoCatalogo`
+(como `CatalogItem`) y `Compromiso` (como `Commitment`) **ya están implementadas** en este repo
+(Decisión 15); `Función`, `CargoFuncion`, `Indicador` y `Auditoría` son alcance de la Eva 3.
 
 Ante cualquier diferencia entre estos diagramas y `docs/decisiones.md`, `decisiones.md` manda — es el
 documento vivo que se actualiza primero.
