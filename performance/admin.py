@@ -216,11 +216,22 @@ class CommitmentAdmin(admin.ModelAdmin):
         return obj.delegation_id == delegation.pk
 
     def has_delete_permission(self, request, obj=None):
-        # Decisión 18: no se permite borrado físico de Commitment desde el
-        # Admin, ni siquiera a Administrador. Mismo criterio que
-        # ValidationAdmin (Decisión 12): conservar el rastro. El borrado
-        # será lógico (deleted_at) al implementarse la Fase 3.
-        return False
+        # Decisión 20 (Fase 3): antes devolvía siempre False (Decisión 18:
+        # "el borrado será lógico al implementarse la Fase 3"). Ahora que
+        # Commitment tiene borrado lógico, "eliminar" solo esconde el
+        # registro (deleted_at) y no destruye el rastro, así que se decide
+        # con el mismo patrón que has_change_permission: permiso de modelo
+        # (delete_commitment, solo Administrador en el seed) + Delegación.
+        if not super().has_delete_permission(request, obj):
+            return False
+        if obj is None:
+            return True
+        delegation = _user_delegation(request)
+        if delegation is None:
+            return True
+        if delegation is _NO_EMPLOYEE:
+            return False
+        return obj.delegation_id == delegation.pk
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         # Sin esto, un Funcionario de una Delegación podía crear un
@@ -417,6 +428,7 @@ class EvidenceAdmin(admin.ModelAdmin):
         verifier = request.user.employee
 
         already_validated = []
+        deleted_validation = []
         without_file = []
         processed = []
 
@@ -427,7 +439,15 @@ class EvidenceAdmin(admin.ModelAdmin):
             # (mismo patrón de caso borde que Decisión 6, aplicado aquí a
             # Evidence.validation en vez de a User.employee).
             if hasattr(evidence, 'validation'):
-                already_validated.append(evidence.code)
+                # Decisión 20: el accesor inverso no filtra los eliminados,
+                # así que una Validation eliminada lógicamente también llega
+                # acá. Sigue ocupando el 1:0..1 de la evidencia (no se puede
+                # crear otra), y se reporta aparte para que el mensaje no
+                # diga "ya tiene validación" sobre una que el usuario no ve.
+                if evidence.validation.deleted_at is not None:
+                    deleted_validation.append(evidence.code)
+                else:
+                    already_validated.append(evidence.code)
                 continue
             if not evidence.file:
                 without_file.append(evidence.code)
@@ -451,6 +471,12 @@ class EvidenceAdmin(admin.ModelAdmin):
             parts.append(
                 f"{len(already_validated)} omitida(s) por ya tener validación: "
                 f"{', '.join(already_validated)}."
+            )
+        if deleted_validation:
+            parts.append(
+                f"{len(deleted_validation)} omitida(s) porque su validación "
+                f"fue eliminada y sigue ocupando el lugar: "
+                f"{', '.join(deleted_validation)}."
             )
         if without_file:
             parts.append(
@@ -502,13 +528,25 @@ class ValidationAdmin(admin.ModelAdmin):
         return obj.evidence.activity.employee.delegation_id == delegation.pk
 
     def has_delete_permission(self, request, obj=None):
-        # Decisión de diseño (Decisión 12, decisiones.md): no se permite
-        # borrar Validation desde el Admin, ni siquiera a Administrador.
-        # Coherente con la política PROTECT / conservar historial de la
-        # Decisión 8 y con la razón de ser de la Decisión 9 (nunca perder
-        # el rastro de una revisión ya emitida: por eso la acción de
-        # Fase 5 usa create() y nunca update_or_create).
-        return False
+        # Decisión 20 (Fase 3), que reemplaza a la Decisión 12: antes nadie
+        # podía borrar una Validation para no perder el rastro de una
+        # revisión ya emitida. Con borrado lógico la fila sigue en la base
+        # de datos (solo se esconde), así que ese riesgo ya no existe y se
+        # decide con el mismo patrón que has_change_permission: rol +
+        # permiso de modelo (delete_validation, solo Administrador en el
+        # seed) + Delegación.
+        if not super().has_delete_permission(request, obj):
+            return False
+        if not (_is_verifier(request) or _unrestricted(request)):
+            return False
+        if obj is None:
+            return True
+        delegation = _user_delegation(request)
+        if delegation is None:
+            return True
+        if delegation is _NO_EMPLOYEE:
+            return False
+        return obj.evidence.activity.employee.delegation_id == delegation.pk
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         # Sin esto, el desplegable de "Evidence" en
