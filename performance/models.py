@@ -1,7 +1,9 @@
+from decimal import Decimal
+
 from django.core.exceptions import ValidationError
 from django.db import models
 
-from organization.models import Employee
+from organization.models import Employee, Position
 
 
 class Period(models.Model):
@@ -90,6 +92,116 @@ class CatalogItem(models.Model):
         return self.name
 
 
+class Meta(models.Model):
+    """Entidad nueva (Fase 2, paso 2.2 -- Decisión 14 ya confirma que
+    existe, sin haberse implementado todavía a la fecha de esa
+    anotación).
+
+    Nota de nomenclatura (no una decisión de este patch, solo una
+    advertencia): "Meta" es también el nombre que usa Django para la
+    clase interna de configuración de cada modelo (`class Meta:` con
+    ordering, verbose_name, etc.). No hay colisión real -- Django siempre
+    resuelve por nombre completo (`performance.Meta` como modelo,
+    `Activity.Meta` como clase interna de otro modelo), confirmado con
+    `manage.py check` y `makemigrations` sin advertencias -- pero conviene
+    tenerlo presente al leer el código de acá en adelante: un `self.Meta`
+    dentro de OTRO modelo de este archivo se refiere a la configuración de
+    ESE modelo, nunca a esta entidad. Se mantiene el nombre `Meta` porque
+    así está fijado en el glosario del proyecto (Guía para Estudiantes,
+    sección 8), en la Decisión 14 y en el propio plan de trabajo de esta
+    entrega -- cambiarlo sería una decisión de nomenclatura nueva, no
+    pedida.
+
+    Campos según el glosario del proyecto (Guía para Estudiantes, sección
+    8: "Meta | Ítem, funcionario/cargo, valor objetivo, unidad y
+    ponderador."):
+
+    - item_name: el "Ítem" del glosario. CharField de texto libre, mismo
+      patrón que Activity.activity_type/service (Decisión 4) -- no FK a
+      CatalogItem. La propia Decisión 14 descarta explícitamente
+      vincular Meta a un elemento de catálogo como una de las tres
+      alternativas simuladas ("FK inversa desde Meta hacia un elemento de
+      catálogo"), precisamente porque esa opción sobrecuenta el avance
+      (RN-009).
+    - position: el "cargo" de "funcionario/cargo" en el glosario. Se
+      eligió Position (Cargo) y no Employee (Funcionario) porque RN-001
+      es explícita: "la suma de ponderadores aplicables a un CARGO y
+      período deberá ser 100%" -- la regla agrupa por cargo, no por
+      funcionario individual.
+    - period: FK a Period, mismo on_delete=PROTECT que ya usa
+      Activity.period (Decisión 8).
+    - target_value: el "valor objetivo". RN-002: "la meta de un ítem
+      cuantitativo deberá ser mayor que cero" -- validado en clean().
+    - unit: la "unidad" del glosario (texto libre: p. ej. "actividades",
+      "%", "informes").
+    - weight: el "ponderador", como porcentaje (0-100). Sujeto a RN-001.
+
+    on_delete=PROTECT en ambas FK, coherente con la política ya fijada en
+    la Decisión 8 para el resto del modelo (period, employee en Activity;
+    delegation, position en Employee)."""
+    position = models.ForeignKey(
+        Position, on_delete=models.PROTECT, related_name='goals'
+    )
+    period = models.ForeignKey(
+        Period, on_delete=models.PROTECT, related_name='goals'
+    )
+    item_name = models.CharField(max_length=150)
+    target_value = models.DecimalField(max_digits=10, decimal_places=2)
+    unit = models.CharField(max_length=50)
+    weight = models.DecimalField(max_digits=5, decimal_places=2)
+
+    def clean(self):
+        super().clean()
+        errors = {}
+
+        # RN-002: "la meta de un ítem cuantitativo deberá ser mayor que
+        # cero". No hay campo separado para distinguir un ítem cuantitativo
+        # de uno porcentual en el alcance actual (RN-002 también menciona
+        # ítems porcentuales con fórmula propia, fuera de este paso), así
+        # que se aplica la validación mínima común a target_value.
+        if self.target_value is not None and self.target_value <= 0:
+            errors['target_value'] = (
+                f"El valor objetivo ({self.target_value}) debe ser mayor "
+                "que cero (RN-002)."
+            )
+
+        # RN-001: "la suma de ponderadores aplicables a un cargo y período
+        # deberá ser 100%, salvo excepción formalmente configurada". El
+        # mecanismo de excepción formal no está definido todavía en
+        # ningún documento del proyecto (ver docs/decisiones.md) y no es
+        # parte del alcance de este paso -- queda pendiente para cuando
+        # se confirme. Lo que sí se valida acá, sin esperar esa
+        # definición, es que la suma NUNCA exceda 100%: eso es un error
+        # de carga en cualquier escenario, con o sin excepción formal,
+        # y es detectable ya con los datos de esta entidad.
+        #
+        # No se exige aquí que la suma sea EXACTAMENTE 100% en cada alta
+        # individual -- un cargo puede ir cargando sus metas una por una
+        # y sumar menos de 100% mientras el conjunto está incompleto; RN-001
+        # describe una propiedad del conjunto completo, no una condición
+        # que cada alta parcial deba cumplir por sí sola.
+        if self.position_id is not None and self.period_id is not None and self.weight is not None:
+            other_weights = Meta.objects.filter(
+                position_id=self.position_id, period_id=self.period_id
+            ).exclude(pk=self.pk).aggregate(
+                total=models.Sum('weight')
+            )['total'] or Decimal('0')
+            total_with_self = other_weights + self.weight
+            if total_with_self > Decimal('100'):
+                errors['weight'] = (
+                    f"La suma de ponderadores para este cargo y período "
+                    f"sería {total_with_self}%, superando el 100% "
+                    f"permitido (RN-001). Ponderador ya asignado a otras "
+                    f"metas del mismo cargo/período: {other_weights}%."
+                )
+
+        if errors:
+            raise ValidationError(errors)
+
+    def __str__(self):
+        return f"Meta {self.item_name} — {self.position} ({self.period})"
+
+
 class Activity(models.Model):
     """Antes Actividad (Decisión 13). funcionario -> employee, periodo ->
     period, tipo_actividad -> activity_type, servicio -> service,
@@ -103,12 +215,28 @@ class Activity(models.Model):
     igual política que employee/period). `activity_type`, `service` y
     `sub_attention` NO cambian en este patch -- ver docstring de
     CatalogItem para la justificación de por qué solo este campo migra
-    ahora."""
+    ahora.
+
+    Fase 2 (paso 2.3): `meta` es FK a Meta, on_delete=PROTECT. Regla de
+    negocio ya confirmada por el docente en la Decisión 14 (no una
+    decisión nueva de este patch): una actividad aporta a una sola meta,
+    no a varias, y NO se infiere por coincidencia con los 4 campos de
+    clasificación (activity_type, service, attention, sub_attention) --
+    esa alternativa fue evaluada y descartada explícitamente porque una
+    actividad podía coincidir con más de un clasificador y sumar de más a
+    varias metas a la vez. Nullable porque una Activity puede registrarse
+    sin imputar a ninguna meta todavía -- las 2 Activity que ya carga
+    seed_sgr.py no se modifican en este patch y simplemente quedan con
+    meta=NULL, sin ningún tratamiento especial adicional."""
     employee = models.ForeignKey(
         Employee, on_delete=models.PROTECT, related_name='activities'
     )
     period = models.ForeignKey(
         Period, on_delete=models.PROTECT, related_name='activities'
+    )
+    meta = models.ForeignKey(
+        Meta, on_delete=models.PROTECT, related_name='activities',
+        null=True, blank=True,
     )
     activity_type = models.CharField(max_length=100)
     service = models.CharField(max_length=100)

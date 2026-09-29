@@ -125,8 +125,12 @@ class PeriodAdmin(admin.ModelAdmin):
 @admin.register(Activity)
 class ActivityAdmin(admin.ModelAdmin):
     # Fase 5 y 6 extienden esta clase — no la dupliques
+    #
+    # Fase 2 (paso 2.3): `meta` se agrega a list_display y
+    # list_select_related -- mismo criterio que period/employee: mostrar
+    # la relación en el listado y evitar N+1 al resolver su __str__.
     list_display = (
-        'id', 'date', 'employee', 'period', 'activity_type',
+        'id', 'date', 'employee', 'period', 'meta', 'activity_type',
         'attention', 'sub_attention', 'service', 'status',
     )
     search_fields = (
@@ -135,7 +139,7 @@ class ActivityAdmin(admin.ModelAdmin):
     )
     list_filter = ('employee__delegation', 'status', 'period')
     ordering = ('-date',)
-    list_select_related = ('employee', 'employee__delegation', 'period', 'attention')
+    list_select_related = ('employee', 'employee__delegation', 'period', 'meta', 'attention')
 
     # --- Fase 5, lo único que agrega esta fase ---
     inlines = [EvidenceInline]
