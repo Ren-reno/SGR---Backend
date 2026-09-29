@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import models
 
-from organization.models import Employee, Position
+from organization.models import Delegation, Employee, Position
 
 
 class Period(models.Model):
@@ -200,6 +200,127 @@ class Meta(models.Model):
 
     def __str__(self):
         return f"Meta {self.item_name} — {self.position} ({self.period})"
+
+
+class Commitment(models.Model):
+    """Antes Compromiso. Entidad nueva (Fase 2, paso 2.4). Campos según
+    el glosario del proyecto (Guía para Estudiantes, sección 8:
+    "Compromiso | Origen, solicitante, territorio, responsable, fecha,
+    apoyo, estado y observación."), RF-016 a RF-021 y HU-02, HU-12 a
+    HU-15.
+
+    - origin: el "Origen" del glosario. RF-016 y la sección 4.2 del caso
+      lo describen como texto ("registrar compromisos futuros derivados
+      de solicitudes internas o externas" / "originado por una solicitud
+      o actividad") -- no hay catálogo cerrado documentado, así que es
+      CharField de texto libre.
+    - requester: el "solicitante" (RF-017, HU-02). Texto libre -- el
+      solicitante es un vecino/tercero externo al sistema en varios de
+      los ejemplos del caso, no necesariamente un Employee registrado.
+    - territory: el "territorio" (RF-017). Texto libre, sin catálogo
+      documentado. Deliberadamente distinto de `delegation` (ver más
+      abajo): HU-12 y el glosario los listan como dos campos separados,
+      no equivalentes -- el territorio operativo de una solicitud no
+      necesariamente coincide 1:1 con la delegación administrativa que
+      gestiona el compromiso.
+    - responsible: el "responsable" (RF-017). FK a Employee, PROTECT
+      (Decisión 8) -- HU-15 ("Continuidad operativa") habla explícitamente
+      de reasignar compromisos entre funcionarios reales del sistema
+      ("conserva responsable anterior, nuevo responsable"), lo que solo
+      tiene sentido si es una relación a Employee y no texto libre. RF-017
+      lo exige obligatorio ("El sistema impide guardar sin responsable...
+      cuando sean obligatorios") -- por eso no lleva null=True.
+    - due_date: la "fecha" (fecha comprometida, RF-017). Obligatoria por
+      la misma regla de RF-017 ("...y fecha cuando sean obligatorios").
+    - support_area: el "apoyo" (área de apoyo, RF-017). Texto libre, sin
+      catálogo documentado -- mismo tratamiento que territory.
+    - status: el "estado". RF-018 fija las 4 transiciones EXACTAS
+      ("Ingresado, Pendiente, En proceso y Realizado") como un conjunto
+      cerrado, no abierto -- y la propia Decisión 4 en decisiones.md ya
+      distingue `EstadoCompromiso` de `ElementoCatalogo` precisamente por
+      eso: el catálogo de clasificación de Activity es abierto/
+      administrable, pero `EstadoCompromiso` "sí es de conjunto cerrado y
+      quedó como ENUM" en el diseño de dominio del propio equipo. Por eso
+      usa choices (equivalente a ENUM en Django) y no CharField de texto
+      libre -- es la decisión de diseño que el plan de trabajo deja
+      explícitamente para este paso, ya resuelta con este dato, no una
+      decisión nueva. Default 'ingresado', coherente con que todo
+      compromiso nace en ese estado según la secuencia de RF-018.
+    - observation: la "observación" del glosario. TextField, blank=True
+      (no toda entrega de compromiso trae observación desde el ingreso).
+
+    Lo que NO incluye este patch: RF-018 también exige que "cada cambio
+    [de estado] conserva estado anterior, nuevo estado, autor, fecha y
+    observación" -- un historial de transiciones. Eso es funcionalmente
+    equivalente a lo que la entidad `Auditoria` cubriría en el diseño
+    completo, y `Auditoria` está explícitamente excluida de esta entrega
+    (Decisión 15, plan de trabajo Eva 2 formativa). Este patch implementa
+    el campo `status` simple que pide el paso 2.4, sin el historial de
+    cambios -- eso queda fuera de alcance, igual que el resto de
+    `Auditoria`.
+
+    Decisión de diseño cerrada en este patch (la que el plan deja
+    explícitamente abierta para el paso 2.4): `delegation` como FK
+    directa, validada con clean() contra la delegación de `responsible`,
+    en vez de inferirla del responsable en tiempo de lectura. Es la
+    recomendación que ya deja anotada el propio plan de trabajo
+    ("Recomendación" en decisiones.md, Pendientes), y se sigue esa
+    recomendación explícitamente:
+    - `delegation` queda como la fuente de verdad real: en el flujo
+      operativo del caso (sección 4.2, "Consolidar porcentajes por
+      funcionario y por delegación") la delegación importa para el
+      reporte y el scoping de acceso, y necesita existir aunque el
+      responsable sea reasignado más adelante (HU-15) -- si se infiriera
+      en tiempo de lectura, reasignar el responsable a otra delegación
+      cambiaría silenciosamente la delegación histórica de un compromiso
+      ya reportado, lo cual RF-019/RF-021 (resúmenes por período) no
+      esperan que ocurra retroactivamente.
+    - Se valida con clean() que `delegation` coincida con
+      `responsible.delegation` al momento de guardar -- no se permite que
+      diverjan por error de carga, pero sí queda registrada como dato
+      propio de la fila, no derivado."""
+    STATUS_INGRESADO = 'ingresado'
+    STATUS_PENDIENTE = 'pendiente'
+    STATUS_EN_PROCESO = 'en_proceso'
+    STATUS_REALIZADO = 'realizado'
+    STATUS_CHOICES = [
+        (STATUS_INGRESADO, 'Ingresado'),
+        (STATUS_PENDIENTE, 'Pendiente'),
+        (STATUS_EN_PROCESO, 'En proceso'),
+        (STATUS_REALIZADO, 'Realizado'),
+    ]
+
+    delegation = models.ForeignKey(
+        Delegation, on_delete=models.PROTECT, related_name='commitments'
+    )
+    responsible = models.ForeignKey(
+        Employee, on_delete=models.PROTECT, related_name='commitments'
+    )
+    origin = models.CharField(max_length=150)
+    requester = models.CharField(max_length=150)
+    territory = models.CharField(max_length=100)
+    due_date = models.DateField()
+    support_area = models.CharField(max_length=100, blank=True)
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_INGRESADO
+    )
+    observation = models.TextField(blank=True)
+
+    def clean(self):
+        super().clean()
+        if self.responsible_id is None or self.delegation_id is None:
+            return
+        if self.responsible.delegation_id != self.delegation_id:
+            raise ValidationError({
+                'delegation': (
+                    f"La delegación ({self.delegation}) no coincide con "
+                    f"la delegación del responsable asignado "
+                    f"({self.responsible.delegation})."
+                )
+            })
+
+    def __str__(self):
+        return f"Compromiso {self.pk} — {self.origin} ({self.get_status_display()})"
 
 
 class Activity(models.Model):
