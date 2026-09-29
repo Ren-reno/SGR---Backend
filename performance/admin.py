@@ -2,7 +2,7 @@ from datetime import date
 
 from django.contrib import admin, messages
 
-from organization.models import Employee
+from organization.models import Delegation, Employee
 from .models import Period, CatalogItem, Meta, Commitment, Activity, Evidence, Validation
 
 
@@ -184,6 +184,64 @@ class CommitmentAdmin(admin.ModelAdmin):
     list_filter = ('status', 'delegation', 'due_date')
     ordering = ('-due_date',)
     list_select_related = ('delegation', 'responsible')
+
+    # --- Patch 5 (Decisión 18): scoping por Delegación y permisos ---
+    # Mismo patrón que ActivityAdmin, con la diferencia de que el filtro
+    # es directo sobre Commitment.delegation (fuente de verdad, Decisión
+    # de diseño del paso 2.4) y no por employee__delegation. Se filtra por
+    # la delegación propia del compromiso, no por la de su responsable
+    # actual: si HU-15 reasignara el responsable a otra delegación, el
+    # compromiso seguiría visible para la delegación que lo originó.
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        delegation = _user_delegation(request)
+        if delegation is None:
+            return qs
+        if delegation is _NO_EMPLOYEE:
+            # Bug 2 (ver _NoEmployee): sin Employee no hay Delegación
+            # contra la cual comparar -> ningún registro, no todos.
+            return qs.none()
+        return qs.filter(delegation=delegation)
+
+    def has_change_permission(self, request, obj=None):
+        if not super().has_change_permission(request, obj):
+            return False
+        if obj is None:
+            return True  # obj=None es la vista de lista, no un registro puntual
+        delegation = _user_delegation(request)
+        if delegation is None:
+            return True
+        if delegation is _NO_EMPLOYEE:
+            return False
+        return obj.delegation_id == delegation.pk
+
+    def has_delete_permission(self, request, obj=None):
+        # Decisión 18: no se permite borrado físico de Commitment desde el
+        # Admin, ni siquiera a Administrador. Mismo criterio que
+        # ValidationAdmin (Decisión 12): conservar el rastro. El borrado
+        # será lógico (deleted_at) al implementarse la Fase 3.
+        return False
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        # Sin esto, un Funcionario de una Delegación podía crear un
+        # compromiso asignado a otra: has_add_permission solo valida el
+        # permiso de modelo, no la delegación (en el alta todavía no hay
+        # `obj` contra el cual comparar). Se limitan las dos FK que
+        # determinan el ámbito. clean() ya exige que responsible.delegation
+        # coincida con delegation, así que ambos desplegables se acotan a
+        # la misma Delegación del usuario.
+        delegation = _user_delegation(request)
+        if db_field.name == 'delegation':
+            if delegation is _NO_EMPLOYEE:
+                kwargs['queryset'] = Delegation.objects.none()
+            elif delegation is not None:
+                kwargs['queryset'] = Delegation.objects.filter(pk=delegation.pk)
+        if db_field.name == 'responsible':
+            if delegation is _NO_EMPLOYEE:
+                kwargs['queryset'] = Employee.objects.none()
+            elif delegation is not None:
+                kwargs['queryset'] = Employee.objects.filter(delegation=delegation)
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
 @admin.register(Activity)

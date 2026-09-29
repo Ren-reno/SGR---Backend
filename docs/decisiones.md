@@ -332,6 +332,87 @@ Se descartó permitir re-aprobar generando una segunda fila de `Validacion` por 
 
 ---
 
+### Decisión 16 — `CatalogItem`: solo `attention` migra a FK (Fase 2, paso 2.1)
+
+**Origen:** el plan de la evaluación formativa deja abierta, antes de escribir `ElementoCatalogo`, si los 4 campos de texto libre de `Activity` (`activity_type`, `service`, `attention`, `sub_attention`) migran todos a FK ahora o quedan para Eva 3.
+
+**Decisión:** `ElementoCatalogo` se implementa como `CatalogItem` (Decisión 13: inglés) y **solo `Activity.attention` migra** a FK (`on_delete=PROTECT`, Decisión 8, con `limit_choices_to` a la categoría `attention`). `activity_type`, `service` y `sub_attention` siguen como `CharField`, pendientes para Eva 3. La tabla es genérica: `category` distingue catálogos, así que sumar los otros 3 después no exige tablas nuevas.
+
+**Justificación:**
+- Es el cambio más invasivo del lote porque toca datos ya cargados por el seed; migrar los 4 de una vez multiplicaba ese riesgo por 4.
+- Se eligió `attention` y no `sub_attention` por ser el campo padre de la relación Atención/Subatención de la Diapositiva 8 de la fuente del caso (Decisión 4). Migrar el padre primero deja la migración parcial más simple de completar.
+- Coincide con la recomendación del propio plan de trabajo.
+
+**Cómo se migró (3 migraciones, no una):** `0002` crea `CatalogItem` y un FK puente `attention_new` nullable; `0003` es una migración de datos que puebla el catálogo con los 6 valores de "Tipo Atención" de la Decisión 4 y asigna cada `Activity`; `0004` elimina el texto viejo y promueve el puente a `attention`. Un `AlterField` directo de `CharField` a `ForeignKey` no puede inferir a qué fila del catálogo corresponde cada texto, y en SQLite falla o corrompe la columna.
+
+**Corrección posterior (patch 5): reversibilidad.** Como venía, `0004` no se podía revertir si existía al menos una `Activity` (`NOT NULL constraint failed: performance_activity.attention`, porque Django re-crea la columna de texto sin default), y el `reverse_populate` de `0003` era un `pass`, con lo que el texto original se perdía. Se agregó un `default=''` a la columna vieja antes de eliminarla y una reversa real que copia `CatalogItem.name` de vuelta a `attention`. Verificado: ida → vuelta a `0001` → ida, con datos reales, conservando el texto original.
+
+**Limitación conocida:** `CATEGORY_CHOICES` solo tiene `attention`; las otras categorías se agregan en Eva 3.
+
+---
+
+### Decisión 17 — `Meta` y `Commitment`: reglas de negocio validadas y decisiones de diseño (Fase 2, pasos 2.2–2.4)
+
+**`Meta` (paso 2.2)**
+- Campos según el glosario de la Guía (sección 8: ítem, cargo, valor objetivo, unidad, ponderador) más `period`. FK a `Position` (no a `Employee`) porque RN-001 agrupa por cargo y período. `on_delete=PROTECT` (Decisión 8).
+- `item_name` es texto libre, **no** FK a `CatalogItem`: la Decisión 14 descartó explícitamente vincular `Meta` a un elemento de catálogo porque sobrecuenta el avance (RN-009).
+- **RN-002** (`target_value` > 0): validado en `clean()`.
+- **RN-001** (suma de ponderadores de un cargo y período): `clean()` solo exige que **no supere 100%**, no que sea exactamente 100%. Un cargo carga sus metas una por una y suma menos de 100% mientras el conjunto está incompleto; la regla describe el conjunto completo, no cada alta parcial. El mecanismo de "excepción formalmente configurada" no está definido en ningún documento y queda pendiente.
+- El nombre `Meta` coincide con la clase interna `class Meta:` de Django; no hay colisión real (verificado con `check` y `makemigrations`), pero conviene tenerlo presente al leer el código.
+
+**`Activity.meta` (paso 2.3)**
+- FK a `Meta`, `PROTECT`, **nullable**: una actividad puede registrarse sin imputar a ninguna meta todavía. Va en la misma rama que `Meta` para no dejarla sin relación con el resto del modelo. Implementa la regla ya confirmada por el docente en la Decisión 14.
+
+**`Commitment` (paso 2.4)**
+- **`delegation` como FK directa**, validada con `clean()` contra la delegación del responsable. Es la opción que sugería la Decisión 14; **sigue sin confirmar por el docente**. Se prefirió sobre inferirla porque, si se infiriera, reasignar el responsable (HU-15) cambiaría en silencio la delegación histórica de un compromiso ya reportado.
+- **`status` con `choices`**: RF-018 fija las 4 transiciones exactas (Ingresado, Pendiente, En proceso, Realizado), así que es un conjunto cerrado y no un catálogo abierto (distinción que ya hacía la Decisión 4). Default `ingresado`.
+- `territory` y `delegation` son campos distintos a propósito: HU-12 y el glosario los listan por separado.
+- **Fuera de alcance:** RF-018 también pide historial de cambios de estado (estado anterior, nuevo, autor, fecha, observación). Es funcionalmente `Auditoria`, excluida por la Decisión 15. Se implementa el `status` simple sin historial.
+
+**Registro en Admin (paso 2.5):** los tres modelos se registran con el patrón de `list_display`/`search_fields`/`list_filter`/`list_select_related` ya usado en `performance/admin.py`.
+
+**Verificado (patch 5):** `Meta` rechaza `target_value` ≤ 0 y sumas > 100%, y al editar no se cuenta a sí misma; `Commitment` rechaza delegación distinta a la del responsable y `status` fuera de las 4 opciones.
+
+---
+
+### Decisión 18 — Quién gestiona `Commitment`, `Meta` y `CatalogItem` en el Admin (patch 5)
+
+**Origen:** tras la Fase 2, `funcionario_demo` y `verificador_demo` recibían 403 en las tres entidades nuevas, porque `seed_sgr.py` no les daba permisos sobre ellas. Ningún paso del plan cubría ese reparto: el 2.5 solo pide registrarlas y el 5.1 solo extiende el scoping a las vistas web.
+
+**Decisión:** el reparto sale de la tabla de actores de la Guía (sección 3), no de un supuesto del equipo.
+
+| Rol | `Commitment` | `Meta` y `CatalogItem` |
+|---|---|---|
+| **Administrador** | ver, agregar, cambiar; ve todas las Delegaciones | control total (incluye borrar) |
+| **Funcionario** | ver, agregar, cambiar, **solo de su Delegación** | sin acceso |
+| **Verificador** | sin acceso | sin acceso |
+| **Delegado** | sin permisos (ver más abajo) | sin acceso |
+
+**Justificación:**
+- La Guía asigna al Funcionario "registrar actividades, **compromisos**..." (HU-12 registrar, HU-13 actualizar estado) → permisos `view`/`add`/`change`.
+- La Guía asigna al Administrador configurar "catálogos, metas y ponderaciones" → `Meta` y `CatalogItem` son configuración, no operación diaria. Que los demás reciban 403 ahí es lo que pide el documento, no un defecto.
+- El Verificador "revisa evidencias, valida o rechaza": un compromiso no es una evidencia.
+
+**Scoping obligatorio (no opcional):** dar permisos sin acotar por Delegación abría una fuga entre delegaciones. `CommitmentAdmin` filtra `get_queryset` por `delegation` (la propia del compromiso, no la de su responsable actual, por el mismo motivo de la Decisión 17), aplica `has_change_permission` por objeto, reutiliza el sentinel `_NO_EMPLOYEE` (Bug 2, Decisión 6) y limita los desplegables `delegation` y `responsible` a la Delegación del usuario.
+
+**Sin borrado físico:** `Commitment` no se puede borrar desde el Admin, ni siquiera por Administrador (`has_delete_permission` devuelve `False`), con el mismo criterio de la Decisión 12 para `Validation`. El borrado será lógico al implementarse la Fase 3 (`deleted_at`). Por eso el seed no otorga `delete_commitment`.
+
+**Verificado:** el funcionario de Norte ve solo su compromiso; el de Centro lo redirige; el POST manual con delegación o responsable ajeno se rechaza; la edición cruzada por POST directo deja el registro ajeno intacto; el Verificador recibe 403; el Administrador ve ambos y no puede borrar.
+
+**Alternativa descartada — crear `delegado_demo`:** la rúbrica formativa pide "**al menos** 3" usuarios de prueba, así que un cuarto sería válido. Se descartó por costo/beneficio: para ser demostrable tendría que poder hacer algo que el Funcionario no (reasignar el responsable, HU-15, prioridad **P2**), lo que exige lógica propia en el `ModelAdmin` y más casos que probar; sin esa diferencia sería un usuario de adorno. Los 3 usuarios actuales ya cumplen "permisos diferentes y demostrables". El grupo `Delegado` sigue creado y sin permisos. **Pendiente para Eva 3:** reasignación de responsable y usuario `delegado_demo`.
+
+**Sobre la Decisión 5:** esa decisión listaba 3 usuarios de prueba; la cantidad no cambia, solo se documenta qué puede hacer cada uno sobre las entidades nuevas.
+
+---
+
+### Decisión 19 — `requirements.txt` en UTF-8 (patch 5)
+
+**Origen:** `requirements.txt` estaba guardado en UTF-16 little-endian con saltos CRLF (típico de `pip freeze > requirements.txt` en PowerShell de Windows). `pip` puede fallar al leerlo según la versión y la plataforma, y Linux (el destino del despliegue en AWS, paso 9.5) no lo interpreta bien.
+
+**Decisión:** reescribirlo en UTF-8 con saltos LF. El contenido (5 dependencias) no cambia. **Al agregar dependencias nuevas (Pillow, `openpyxl`, Faker), no usar `>` de PowerShell**: usar `pip freeze | Out-File -Encoding utf8` o editar el archivo a mano.
+
+---
+
 ## Verificación de alcance contra la rúbrica
 
 Las 7 entidades escogidas (Delegación, Cargo, Funcionario, Período, Actividad, Evidencia, Validación) fueron confirmadas como necesarias y suficientes para cada criterio de esta evaluación:
@@ -352,7 +433,7 @@ No se agregan entidades adicionales solo para "tener más" — cada una de las 7
 
 **Este apartado decía, hasta la Decisión 13, que las 7 entidades siguientes quedaban fuera de esta evaluación "por decisión de fasificación del proyecto — no por olvido". La Decisión 14 revirtió eso**, fijando como alcance 8 módulos sobre las 14 entidades del dominio completo. **La Decisión 15 aclara que ese alcance de 14 entidades corresponde a la Eva 3 (evaluación sumativa III, aún no entregada)**, y que la evaluación formativa en curso (`docs/Evaluacion_Formativa_U2_BackEnd_TI3V41_INACAP.md`) toma solo 3 de estas 7 candidatas. Se deja registro de cada cambio en vez de borrar el texto anterior sin dejar rastro, porque las tres entregas (Evaluación Sumativa II de Admin, esta evaluación formativa de integración, y la futura Eva 3) comparten el mismo repo y el mismo `decisiones.md`.
 
-De las 7 entidades que antes figuraban fuera de alcance, estado real por la Decisión 15 (ninguna existe todavía en el repo a la fecha de esta anotación):
+De las 7 entidades que antes figuraban fuera de alcance, estado real por la Decisión 15. **Actualización (patches 1–5): `Meta`, `ElementoCatalogo` y `Compromiso` ya existen en el repo** (ver Decisiones 16, 17 y 18); las otras 4 siguen sin construirse por ser alcance de Eva 3:
 
 - `Meta` — **dentro del alcance de esta entrega formativa** (Decisión 15). Requerida antes de poder agregar `Activity.meta` (Decisión 14).
 - `ElementoCatalogo` — **dentro del alcance de esta entrega formativa** (Decisión 15). Cuando exista, queda pendiente decidir si los 4 campos de clasificación de `Activity` (`activity_type`, `service`, `attention`, `sub_attention`, hoy texto libre — ver Decisión 4) migran a FK reales hacia ella; es el cambio más invasivo del lote porque toca datos ya cargados por el seed.
@@ -369,7 +450,7 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 - [x] ~~Definir la acción personalizada concreta de Admin Pro~~ → resuelto: aprobar evidencias en lote, restringida al grupo `Verificador` (Decisión 9).
 - [ ] Confirmar reparto de las **fases del plan de trabajo** entre los 4 integrantes del equipo (pendiente fuera de esta conversación — no bloquea el inicio de Fase 1).
 - [ ] **Nuevo, Decisión 14, alcance Eva 3 (ver Decisión 15):** reparto de los **8 módulos** (distinto del reparto de fases de arriba) entre los 4 integrantes. Queda explícitamente sin fijar, solo sugerido como 2 módulos por integrante. No bloquea la entrega formativa en curso, que usa el alcance de la Decisión 15.
-- [ ] Revisar si, al incorporar `ElementoCatalogo` en una entrega futura, migrar los 4 campos de texto libre de `Actividad` hacia FK reales.
+- [ ] Revisar si, al incorporar `ElementoCatalogo` en una entrega futura, migrar los 4 campos de texto libre de `Actividad` hacia FK reales. **Avance (Decisión 16):** solo `attention` migró; quedan pendientes `activity_type`, `service` y `sub_attention` para Eva 3.
 - [x] ~~Confirmar si `Meta`/`CargoFuncion` se incorporan en esta entrega~~ → **revertido por la Decisión 14**: sí se incorporan. Esta línea decía lo contrario hasta la Decisión 13; se mantiene tachada por trazabilidad histórica, no porque siga vigente. `Cargo`/`Position` deja de tener una sola relación activa una vez que exista `CargoFuncion`.
 - [x] ~~Afinar tipos de datos definitivos de cada campo (`IntegerField` vs `PositiveIntegerField`, `FileField` vs `URLField`, etc.)~~ → `Evidencia.archivoOVinculo` resuelto como `FileField` (Decisión 7). Resto de tipos numéricos (`PositiveIntegerField` vs `IntegerField`) queda para revisión campo a campo al momento de escribir `models.py`.
 - [x] ~~Definir política de `on_delete` en las FK~~ → resuelto: `PROTECT` por defecto, `CASCADE` solo en `Funcionario.user` y `Validacion.evidencia` (Decisión 8).
@@ -381,9 +462,13 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 - [ ] **Nuevo, por evaluación formativa 2.1.1–2.1.4:** diseñar e implementar login, logout y recuperación de contraseña por código de 6 dígitos (vive en `accounts`, que quedó sin modelos por la Decisión 13). Asignado como pieza de trabajo aparte de los 8 módulos del dominio completo — sin dueño confirmado todavía dentro del equipo.
 - [ ] **Nuevo, por evaluación formativa 2.1.1–2.1.4:** definir qué entidades son "eliminables" (con `deleted_at` o equivalente) y el patrón de manager/queryset para excluirlas de listados normales — todavía no implementado en ninguna de las 7 entidades actuales, y la lista de candidatas crece con la Decisión 14 (probablemente sume `Compromiso`).
 - [ ] **Nuevo, Decisión 14, sin confirmar por el docente (no tratar como resuelto):** si `Indicador` se persiste como tabla o se calcula al vuelo. Solo hay recomendación de tabla persistida con recálculo vía `services.py`.
-- [ ] **Nuevo, Decisión 14, sin confirmar por el docente (no tratar como resuelto):** fuente de verdad de `Compromiso.delegacion` — FK directa vs. inferida del responsable. Solo hay sugerencia de que la FK directa sea la fuente de verdad, validada con `clean()`.
+- [ ] **Nuevo, Decisión 14, sin confirmar por el docente (no tratar como resuelto):** fuente de verdad de `Compromiso.delegacion` — FK directa vs. inferida del responsable. Solo hay sugerencia de que la FK directa sea la fuente de verdad, validada con `clean()`. **Implementada así en la Fase 2 (Decisión 17), pero sigue sin confirmar por el docente.**
 - [ ] **Nuevo, Decisión 14:** si hay un mínimo de complejidad esperado por módulo — sigue sin respuesta del docente.
 - [x] ~~**Nota de numeración:** si en una entrega futura se documenta la decisión de agregar `Actividad.meta`... debe numerarse **Decisión 14**, no 13~~ → resuelto: ver Decisión 14 arriba.
-- [ ] **Nuevo, Decisión 15:** construir `Meta`, `ElementoCatalogo` y `Compromiso` (`models.py`, migraciones, registro en Django Admin) — ninguna de las tres existe todavía en el repo. `Meta` habilita además implementar `Activity.meta` (Decisión 14), pendiente de la misma forma.
-- [ ] **Nuevo, Decisión 15:** definir en qué app vive cada una de las 3 nuevas entidades (`organization` o `performance`, siguiendo la separación de la Decisión 13) o si ameritan una app propia — sin decidir todavía.
+- [x] ~~**Nuevo, Decisión 15:** construir `Meta`, `ElementoCatalogo` y `Compromiso` (`models.py`, migraciones, registro en Django Admin)~~ → **resuelto en la Fase 2 (patches 1–5)**: las tres existen (`ElementoCatalogo` como `CatalogItem`, `Compromiso` como `Commitment`), con migraciones `0002`–`0006` y registro en Admin. `Activity.meta` (Decisión 14) también quedó implementada. Ver Decisiones 16, 17 y 18.
+- [x] ~~**Nuevo, Decisión 15:** definir en qué app vive cada una de las 3 nuevas entidades~~ → **resuelto de hecho en la Fase 2**: las tres viven en `performance` (`CatalogItem`, `Meta`, `Commitment`), junto a `Period` y `Activity`, con las que se relacionan. Ninguna ameritó app propia.
+- [ ] **Nuevo, Decisión 18:** implementar reasignación de responsable de un `Commitment` (HU-15, P2) y crear el usuario `delegado_demo` — el grupo `Delegado` existe pero sin permisos ni usuario de prueba. Alcance de Eva 3, no de la formativa.
+- [ ] **Nuevo, Decisión 18:** el scoping por Delegación de `Commitment` está solo en el Admin. Debe replicarse en las vistas web de la Fase 6 (paso 5.1 del plan) si `Commitment` se elige entre los 4 CRUD.
+- [ ] **Nuevo, Decisión 18:** cuando se implemente el borrado lógico (Fase 3), `Commitment` debe incluirse entre las entidades "eliminables"; hoy no se puede borrar de ninguna forma desde el Admin.
+- [ ] **Nuevo, Decisión 17:** mecanismo de "excepción formalmente configurada" de RN-001 (suma de ponderadores = 100%) — no definido en ningún documento del proyecto; hoy `clean()` solo exige que no supere 100%.
 - [ ] **Nuevo, Decisión 15:** repartir entre el equipo cuál de las 3 nuevas entidades (`Meta`, `ElementoCatalogo`, `Compromiso`) construye cada integrante — sin fijar todavía, análogo al pendiente de reparto de la Decisión 14 pero para el alcance de esta entrega formativa, no el de Eva 3.

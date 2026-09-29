@@ -64,13 +64,20 @@ def populate_catalog_and_migrate_data(apps, schema_editor):
 
 
 def reverse_populate(apps, schema_editor):
-    # Reversa simétrica: vuelve a dejar el texto en attention_new no se
-    # necesita (ese campo se elimina en 0004), y el CatalogItem creado acá
-    # no se borra al revertir porque otra migración de datos posterior
-    # podría depender de su existencia -- coherente con que el resto del
-    # proyecto no hace borrado físico (Fase 3, patrón deleted_at) salvo
-    # que el paso lo pida explícitamente.
-    pass
+    # Reversa real (antes era `pass`): copia el nombre del CatalogItem de
+    # vuelta al CharField `attention`, para que revertir la Fase 2 no
+    # pierda el texto original de cada Activity. Al revertir 0004 el
+    # campo de texto `attention` se re-crea (con default '') y el FK
+    # vuelve a llamarse `attention_new`; este paso rellena ese texto.
+    #
+    # Los CatalogItem creados en la ida NO se borran al revertir, por el
+    # motivo ya anotado: coherente con que el proyecto no hace borrado
+    # físico (Fase 3, patrón deleted_at) y con que el catálogo representa
+    # el conjunto de valores válidos del negocio, no solo lo cargado hoy.
+    Activity = apps.get_model('performance', 'Activity')
+    for activity in Activity.objects.exclude(attention_new__isnull=True).select_related('attention_new'):
+        activity.attention = activity.attention_new.name
+        activity.save(update_fields=['attention'])
 
 
 class Migration(migrations.Migration):

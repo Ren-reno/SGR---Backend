@@ -70,6 +70,20 @@ PERMISOS_POR_GRUPO = {
         # has_delete_permission() (Fase 6 / Decisión 12) devuelve False
         # para todos sin excepción, así que este permiso nunca se ejerce
         # y no se otorga aunque el usuario sea Administrador.
+        #
+        # Fase 2 (patch 5, Decisión 18): Commitment. delete_commitment
+        # deliberadamente excluido, igual que delete_validation: el borrado
+        # de compromisos será lógico (Fase 3, deleted_at), nunca físico
+        # desde el Admin -- ver CommitmentAdmin.has_delete_permission.
+        ("performance", "view_commitment"), ("performance", "add_commitment"),
+        ("performance", "change_commitment"),
+        # CatalogItem y Meta: solo Administrador (Decisión 18). La Guía
+        # (sección 3) asigna al Administrador "catálogos, metas y
+        # ponderaciones" como responsabilidad propia.
+        ("performance", "view_catalogitem"), ("performance", "add_catalogitem"),
+        ("performance", "change_catalogitem"), ("performance", "delete_catalogitem"),
+        ("performance", "view_meta"), ("performance", "add_meta"),
+        ("performance", "change_meta"), ("performance", "delete_meta"),
     ],
     "Funcionario": [
         # Ve y edita sus propias Activities/Evidences (get_queryset ya
@@ -79,6 +93,13 @@ PERMISOS_POR_GRUPO = {
         # acceso a Validation en absoluto).
         ("performance", "view_activity"), ("performance", "change_activity"),
         ("performance", "view_evidence"), ("performance", "change_evidence"),
+        # Fase 2 (patch 5, Decisión 18): Commitment. La Guía asigna al
+        # Funcionario registrar compromisos (HU-12) y actualizar su
+        # estado (HU-13) -> view + add + change. Sin delete: el borrado
+        # será lógico (Fase 3). El acotamiento a su propia Delegación NO
+        # depende de estos permisos: lo impone CommitmentAdmin.
+        ("performance", "view_commitment"), ("performance", "add_commitment"),
+        ("performance", "change_commitment"),
     ],
     "Verificador": [
         # Mismo acceso de lectura/edición que Funcionario sobre
@@ -90,10 +111,17 @@ PERMISOS_POR_GRUPO = {
         ("performance", "view_validation"), ("performance", "add_validation"),
         ("performance", "change_validation"),
     ],
+    # "Verificador": sin permisos sobre Commitment (Decisión 18). La Guía
+    # le asigna revisar evidencias y validar o rechazar registros; un
+    # compromiso no es una evidencia.
+    #
     # "Delegado": sin permisos de modelo asignados en esta fase -- el plan
     # y la Decisión 6 no definen todavía qué puede hacer este rol en el
     # Admin; se deja el grupo creado (ya lo hacía Fase 3) pero vacío de
-    # permisos, en vez de inventar un alcance no pedido.
+    # permisos, en vez de inventar un alcance no pedido. La Decisión 18
+    # documenta por qué tampoco se crea un usuario delegado_demo ahora:
+    # la reasignación de responsable (HU-15, P2) es su única diferencia
+    # real frente a Funcionario y queda fuera del alcance formativo.
 }
 
 # Movido de core/fixtures/seed_files a performance/fixtures/seed_files

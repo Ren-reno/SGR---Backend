@@ -14,6 +14,18 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        # Antes: RemoveField directo. Al REVERTIR, Django re-crea la
+        # columna de texto `attention` como NOT NULL sin default, y con
+        # cualquier Activity ya cargada falla (IntegrityError). Se agrega
+        # primero un default vacío al campo de texto viejo: no cambia nada
+        # al avanzar (la columna se elimina justo después), pero permite
+        # que la reversa la re-cree y 0003.reverse_populate la rellene
+        # con el nombre del CatalogItem.
+        migrations.AlterField(
+            model_name='activity',
+            name='attention',
+            field=models.CharField(max_length=100, default=''),
+        ),
         migrations.RemoveField(
             model_name='activity',
             name='attention',
