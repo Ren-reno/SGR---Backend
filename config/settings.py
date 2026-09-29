@@ -60,7 +60,7 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -93,7 +93,15 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        # Largo mínimo 10 (rúbrica formativa req. 4). Es MinimumLengthValidator
+        # de Django con el mensaje en español; ver accounts/validators.py.
+        'NAME': 'accounts.validators.SpanishMinimumLengthValidator',
+        'OPTIONS': {'min_length': 10},
+    },
+    {
+        # Mayúscula + minúscula + número + carácter especial (Fase 4, rúbrica
+        # formativa req. 4). Ver accounts/validators.py.
+        'NAME': 'accounts.validators.PasswordComplexityValidator',
     },
     {
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
@@ -127,3 +135,10 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# Autenticación (Fase 4). Las vistas protegidas con @login_required /
+# LoginRequiredMixin redirigen acá; tras entrar se va al Admin hasta que la
+# Fase 6 defina un inicio propio del CRUD web.
+LOGIN_URL = 'accounts:login'
+LOGIN_REDIRECT_URL = 'admin:index'
+LOGOUT_REDIRECT_URL = 'accounts:login'

@@ -1,0 +1,70 @@
+{% comment %}
+Base compartida de todo el sitio web (no del Admin, que trae la suya).
+Nace en la Fase 4 para las pantallas de accounts; la Fase 6 (CRUD web) y la
+Fase 7 (SweetAlert2) la extienden con `{% extends "base.html" %}` -- por eso
+expone los bloques `title`, `content` y `extra_head`/`extra_js`.
+Sin CDN ni framework CSS: funciona igual en un despliegue sin salida a
+internet, y hay una sola hoja de estilo inline que explicar.
+{% endcomment %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}SGR{% endblock %} · SGR</title>
+  <style>
+    :root { --c-primary:#1f4e79; --c-bg:#f4f6f8; --c-border:#d5dbe1; --c-err:#b3261e; --c-ok:#1b6e3c; --c-info:#1f4e79; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; background:var(--c-bg); color:#1c2329; line-height:1.5; }
+    header.top { background:var(--c-primary); color:#fff; padding:.7rem 1.25rem; display:flex; align-items:center; justify-content:space-between; }
+    header.top a { color:#fff; text-decoration:none; }
+    header.top .brand { font-weight:600; letter-spacing:.02em; }
+    header.top form { margin:0; display:inline; }
+    header.top button { background:transparent; border:1px solid #ffffff88; color:#fff; padding:.3rem .8rem; border-radius:4px; cursor:pointer; }
+    main { max-width:34rem; margin:2rem auto; padding:0 1rem; }
+    .card { background:#fff; border:1px solid var(--c-border); border-radius:8px; padding:1.5rem 1.75rem; }
+    h1 { margin:0 0 1rem; font-size:1.4rem; }
+    label { display:block; font-weight:600; margin:1rem 0 .25rem; }
+    input[type=text], input[type=password] { width:100%; padding:.55rem .65rem; border:1px solid var(--c-border); border-radius:4px; font-size:1rem; }
+    input:focus { outline:2px solid var(--c-primary); outline-offset:1px; }
+    .btn { display:inline-block; margin-top:1.25rem; background:var(--c-primary); color:#fff; border:0; padding:.6rem 1.2rem; border-radius:4px; font-size:1rem; cursor:pointer; text-decoration:none; }
+    .helptext, .help { color:#5b6773; font-size:.85rem; margin-top:.25rem; }
+    .helptext ul, .help ul { margin:.25rem 0 0 1.1rem; padding:0; }
+    .errorlist { list-style:none; margin:.3rem 0 0; padding:0; color:var(--c-err); font-size:.9rem; }
+    .messages { list-style:none; padding:0; margin:0 0 1rem; }
+    .messages li { padding:.65rem .9rem; border-radius:4px; margin-bottom:.5rem; border:1px solid; }
+    .messages .success { color:var(--c-ok); border-color:var(--c-ok); background:#eef8f1; }
+    .messages .error { color:var(--c-err); border-color:var(--c-err); background:#fdeeed; }
+    .messages .info { color:var(--c-info); border-color:var(--c-info); background:#eaf1f8; }
+    .links { margin-top:1.25rem; font-size:.9rem; }
+    .demo-code { font-size:2rem; letter-spacing:.35rem; font-weight:700; text-align:center; padding:.75rem; background:#fff8e1; border:2px dashed #c9a227; border-radius:6px; margin:1rem 0; }
+    .demo-note { font-size:.8rem; color:#7a5c00; text-align:center; }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">SGR · Sistema de Gestión de Resultados</a>
+    {% if user.is_authenticated %}
+      <span>
+        {{ user.get_username }}
+        <form method="post" action="{% url 'accounts:logout' %}">
+          {% csrf_token %}
+          <button type="submit">Cerrar sesión</button>
+        </form>
+      </span>
+    {% endif %}
+  </header>
+  <main>
+    {% if messages %}
+      <ul class="messages">
+        {% for message in messages %}
+          <li class="{{ message.tags }}">{{ message }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>
