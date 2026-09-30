@@ -445,7 +445,10 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------
     # Evidencias -- FileField real (Decision 7). Evidence.code es PK
-    # natural string (Decision 11) -- se asigna explícito, no autogenerado.
+    # natural string (Decision 11). Desde la Decisión 33 el sistema lo genera
+    # cuando no se le da uno (`Evidence.save()`); el seed lo asigna explícito
+    # a propósito: son datos de demo con clave fija, y `_get_or_restore` los
+    # busca por código para poder correr el comando varias veces sin duplicarlos.
     #
     # NOTA: Evidence.date es DateField obligatorio (sin default) en el
     # models.py real -- se agrega explícito como date=actividad.date
@@ -474,7 +477,7 @@ class Command(BaseCommand):
                 defaults=dict(
                     activity=actividad,
                     date=actividad.date,
-                    review_status="Pendiente",
+                    review_status=Evidence.REVIEW_STATUS_PENDIENTE,
                 ),
             )
             if creado:

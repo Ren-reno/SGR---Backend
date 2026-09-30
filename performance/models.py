@@ -1,7 +1,8 @@
+import re
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import IntegrityError, models, transaction
 from django.db.models import ProtectedError
 
 from organization.models import Delegation, Employee, Position
@@ -409,18 +410,116 @@ class Activity(SoftDeleteModel):
 class Evidence(SoftDeleteModel):
     """Antes Evidencia (Decisión 13). codigo -> code, actividad -> activity,
     archivo -> file, fecha -> date, metadatos -> metadata,
-    estado_revision -> review_status."""
-    code = models.CharField(max_length=30, primary_key=True)
+    estado_revision -> review_status.
+
+    `review_status` es un conjunto cerrado (Decisión 30), igual que
+    `Commitment.status`: se guarda en minúscula (`pendiente`, `aprobada`,
+    `rechazada`) y la etiqueta visible sale de `get_review_status_display()`.
+    Los miembros salen de los valores que el código ya usaba: `pendiente`
+    (default del modelo y del seed), `aprobada` (acción masiva del Admin,
+    Decisión 9-bis) y `rechazada` (ya la esperaba el listado web y la nombra
+    el plan del Admin). Que exista `rechazada` no implica que algo la escriba
+    hoy: `review_status` solo cambia por la acción masiva (Decisión 24
+    punto 6, sin sincronizar con `Validation`).
+
+    `code` lo genera el sistema y no es editable (Decisión 33, RF-011): al
+    crear una evidencia sin código, `save()` asigna el siguiente `EVID-NNNN`
+    (ver `next_code()`). Una evidencia que ya trae código -- el seed, los
+    tests, las filas anteriores a la Decisión 33 -- lo conserva. Ojo:
+    `bulk_create()` no llama a `save()`; quien lo use debe asignar los
+    códigos él mismo."""
+    REVIEW_STATUS_PENDIENTE = 'pendiente'
+    REVIEW_STATUS_APROBADA = 'aprobada'
+    REVIEW_STATUS_RECHAZADA = 'rechazada'
+    REVIEW_STATUS_CHOICES = [
+        (REVIEW_STATUS_PENDIENTE, 'Pendiente'),
+        (REVIEW_STATUS_APROBADA, 'Aprobada'),
+        (REVIEW_STATUS_RECHAZADA, 'Rechazada'),
+    ]
+
+    # Decisión 33: formato del código que genera el sistema y cuántas veces
+    # se recalcula si otra petición se adelanta con el mismo número.
+    CODE_PREFIX = 'EVID-'
+    CODE_DIGITS = 4
+    CODE_MAX_ATTEMPTS = 10
+    _CODE_RE = re.compile(rf'^{re.escape(CODE_PREFIX)}(\d+)$', re.IGNORECASE)
+
+    code = models.CharField(
+        max_length=30, primary_key=True, editable=False,
+        help_text=(
+            'Lo asigna el sistema al guardar (EVID-0001, EVID-0002...) y no '
+            'se puede cambiar.'
+        ),
+    )
     activity = models.ForeignKey(
         Activity, on_delete=models.PROTECT, related_name='evidence_items'
     )
     file = models.FileField(upload_to='evidence/%Y/%m/', validators=[validate_evidence_file],)
     date = models.DateField()
     metadata = models.TextField(blank=True)
-    review_status = models.CharField(max_length=30, default='pendiente')
+    review_status = models.CharField(
+        max_length=30,
+        choices=REVIEW_STATUS_CHOICES,
+        default=REVIEW_STATUS_PENDIENTE,
+    )
 
     def __str__(self):
         return self.code
+
+    @classmethod
+    def next_code(cls):
+        """Siguiente código libre: EVID-0001, EVID-0002, ... (Decisión 33).
+
+        Mira `all_objects`: una evidencia eliminada lógicamente sigue ocupando
+        su código (Decisión 26) y no se reutiliza. Solo cuentan los códigos con
+        forma EVID-<dígitos>, sin distinguir mayúsculas; cualquier otro (una
+        fila anterior a la Decisión 33 con un código libre) se ignora. Se
+        calcula en Python y no con un MAX de SQL: un CAST a entero sobre un
+        código heredado como "EVID-ABC" da 0 en SQLite ("EVID-12X" contaría
+        como 12) y es un error en otros motores.
+        """
+        codes = cls.all_objects.filter(
+            code__istartswith=cls.CODE_PREFIX
+        ).values_list('code', flat=True)
+        last = 0
+        for code in codes.iterator():
+            match = cls._CODE_RE.match(code)
+            if match:
+                last = max(last, int(match.group(1)))
+        return f'{cls.CODE_PREFIX}{last + 1:0{cls.CODE_DIGITS}d}'
+
+    def save(self, *args, **kwargs):
+        # Decisión 33: al crear sin código, el sistema lo asigna (RF-011).
+        # Guardar una fila existente, o crear una con código explícito, no
+        # pasa por acá.
+        if self._state.adding and not self.code:
+            self._save_with_new_code(*args, **kwargs)
+        else:
+            super().save(*args, **kwargs)
+
+    def _save_with_new_code(self, *args, **kwargs):
+        # `code` es la clave primaria, así que hay dos cuidados:
+        # - `force_insert`: si otra petición tomó el mismo número entre que se
+        #   calculó y se inserta, el guardado debe fallar (IntegrityError) y
+        #   reintentarse. Sin él, Django intentaría primero un UPDATE y pisaría
+        #   en silencio la fila de la otra petición.
+        # - Un savepoint por intento: el fallo no debe dejar inservible la
+        #   transacción que rodea al guardado (la del Admin, la de los tests).
+        kwargs['force_insert'] = True
+        for attempt in range(1, self.CODE_MAX_ATTEMPTS + 1):
+            self.code = self.next_code()
+            try:
+                with transaction.atomic():
+                    super().save(*args, **kwargs)
+                return
+            except IntegrityError:
+                # Es una colisión solo si el código quedó ocupado. Otro
+                # IntegrityError (una columna obligatoria vacía, por ejemplo)
+                # es un error real y no se reintenta.
+                taken = type(self).all_objects.filter(pk=self.code).exists()
+                if not taken or attempt == self.CODE_MAX_ATTEMPTS:
+                    self.code = ''
+                    raise
 
     def _before_soft_delete(self):
         # Decisión 20: Validation.evidence es CASCADE (Decisión 8: una

@@ -4,6 +4,7 @@ from django.contrib import admin, messages
 
 from organization.models import Delegation, Employee
 from .models import Period, CatalogItem, Meta, Commitment, Activity, Evidence, Validation
+from .scoping import is_unrestricted
 
 
 def _unrestricted(request):
@@ -26,9 +27,9 @@ def _unrestricted(request):
     bloqueado igual, contradiciendo la Decisión 6. Se centraliza acá y se
     reutiliza en los tres lugares.
     """
-    if request.user.is_superuser:
-        return True
-    return request.user.groups.filter(name="Administrador").exists()
+    # Decisión 31: la definición vive en scoping.py y la comparte el scoping
+    # de las vistas web, para que web y Admin no puedan volver a divergir.
+    return is_unrestricted(request.user)
 
 
 class _NoEmployee:
@@ -328,6 +329,13 @@ class EvidenceAdmin(admin.ModelAdmin):
     ordering = ('-date',)
     list_select_related = ('activity',)
 
+    # Decisión 33: el código lo genera el sistema (RF-011) y es editable=False,
+    # así que el Admin solo puede mostrarlo. `readonly_fields` lo saca del
+    # formulario; `fields` lo deja primero, porque solo con `readonly_fields`
+    # iría al final.
+    fields = ('code', 'activity', 'file', 'date', 'metadata', 'review_status')
+    readonly_fields = ('code',)
+
     # --- Fase 5, lo único que agrega esta fase ---
     inlines = [ValidationInline]
     actions = ['approve_evidence_in_bulk']
@@ -385,7 +393,7 @@ class EvidenceAdmin(admin.ModelAdmin):
 
         NOTA — Decisión 9-bis (decisiones.md): además de crear la
         Validation, esta acción marca Evidence.review_status =
-        'Aprobada' en las evidencias efectivamente procesadas. Las
+        'aprobada' (Evidence.REVIEW_STATUS_APROBADA, Decisión 30) en las evidencias efectivamente procesadas. Las
         evidencias EXCLUIDAS (ya validadas o sin archivo) no tocan
         review_status bajo ningún motivo.
 
@@ -462,7 +470,7 @@ class EvidenceAdmin(admin.ModelAdmin):
             )
             # Decisión 9-bis (ver docstring): solo las procesadas cambian
             # review_status. Las excluidas quedan intactas.
-            evidence.review_status = 'Aprobada'
+            evidence.review_status = Evidence.REVIEW_STATUS_APROBADA
             evidence.save(update_fields=['review_status'])
             processed.append(evidence.code)
 
