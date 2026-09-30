@@ -37,7 +37,8 @@ para no sumar una petición estática más.
     .toolbar h1 { margin:0; }
     label { display:block; font-weight:600; margin:1rem 0 .25rem; }
     input[type=text], input[type=password] { width:100%; padding:.55rem .65rem; border:1px solid var(--c-border); border-radius:4px; font-size:1rem; }
-    input:focus { outline:2px solid var(--c-primary); outline-offset:1px; }
+    input[type=date], input[type=number], select, textarea { width:100%; padding:.55rem .65rem; border:1px solid var(--c-border); border-radius:4px; font-size:1rem; font-family:inherit; background:#fff; }
+    input:focus, select:focus, textarea:focus { outline:2px solid var(--c-primary); outline-offset:1px; }
     .btn { display:inline-block; margin-top:1.25rem; background:var(--c-primary); color:#fff; border:0; padding:.6rem 1.2rem; border-radius:4px; font-size:1rem; cursor:pointer; text-decoration:none; }
     .helptext, .help { color:#5b6773; font-size:.85rem; margin-top:.25rem; }
     .helptext ul, .help ul { margin:.25rem 0 0 1.1rem; padding:0; }

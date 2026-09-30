@@ -536,3 +536,27 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 - [ ] **Nuevo, Decisión 20:** no hay límite de solicitudes de código de recuperación por usuario/IP (throttling). Solo se limitan los intentos de *adivinar* un código, no los de *pedirlo*.
 - [ ] **Nuevo, Decisión 21:** definir `ordering` real (con sentido de negocio, no solo `pk`) en cada una de las 4 vistas de listado de 6.1 a 6.4 — el mixin de paginación lo exige para evitar `UnorderedObjectListWarning`, pero cuál campo usar (¿`-date`? ¿`-created_at`, si la Fase 3 lo agrega?) queda para cuando se escriba cada vista concreta.
 - [ ] **Nuevo, Decisión 21:** decidir si `SessionPaginationMixin` debe combinarse con el patrón de borrado lógico de la Fase 3 (excluir `deleted_at` no nulo) dentro de `DelegationScopedQuerysetMixin.get_scoped_queryset()`, o si cada vista de 6.1 a 6.4 lo agrega por su cuenta encima del queryset ya scoped. El mixin de scoping fue diseñado para admitir esto (ver su docstring), pero la decisión concreta depende de cómo la Fase 3 (en curso, en paralelo) termine nombrando el manager custom.
+
+---
+
+### Decisión 22 — CRUD web de Activity: listar, crear y editar (Fase 6, paso 6.1)
+
+**Origen:** pasos 6.2 a 6.5 del plan aplicados a `Activity`, la primera de las 4 entidades. Deja además el andamiaje que reutilizan 6.2 a 6.4: paquete `performance/views/`, `performance/forms.py`, `performance/urls.py`, el parcial de campos de formulario y el `include` en `config/urls.py`. La eliminación no entra: va en el patch final.
+
+**Decisión:**
+1. **`performance/views.py` pasa a paquete `performance/views/`**, con un archivo por entidad (`activity.py` ahora; `evidence.py`, `validation.py`, `commitment.py` después). `__init__.py` queda vacío a propósito para que los patches 6.2 a 6.4 no choquen ahí. `views.py` tenía 3 líneas (el `render` sin usar de `startapp`).
+2. **Permisos = los de modelo que ya usa el Admin** (`PermissionRequiredMixin`: `view_`, `add_`, `change_activity`), no reglas nuevas. Sin sesión redirige al login; con sesión y sin permiso, 403. Con lo que asigna `seed_sgr`, Funcionario y Verificador ven y editan pero no crean, y Delegado no accede a nada; igual que en el Admin.
+3. **`scope_queryset_for_user()` en `scoping.py`.** La regla de scoping se extrae a una función y el mixin pasa a llamarla (mismo comportamiento; los tests de 6.0 siguen verdes). Motivo: el scoping de la vista solo acota **qué registros se ven**, no **qué valores se escriben**. Sin acotar el desplegable `employee`, un Funcionario con permiso de edición podía mover una actividad a un empleado de otra Delegación cambiando el valor en el POST. `ActivityForm` recibe `user` y acota `employee` con la misma función; hay test de regresión y se comprobó que falla si se quita el acotado.
+4. **Validaciones de servidor** en `ActivityForm`, además del `clean()` del modelo que ya valida que la fecha caiga dentro del `Period` y que `ModelForm` ejecuta solo:
+   - Requeridos (los espacios en blanco no cuentan como valor).
+   - Teléfono, si se completa: solo dígitos y `+ - ( )`, con al menos 7 dígitos.
+   - Duplicado: mismo funcionario, fecha, tipo de actividad y solicitud (sin distinguir mayúsculas). Excluye la propia fila al editar y las eliminadas lógicamente.
+5. **`attention` ofrece solo ítems de catálogo vigentes**; si la actividad ya tenía uno dado de baja, se conserva en el desplegable para poder editarla sin perderlo.
+6. **URLs en la raíz** (`/activities/`, `/activities/new/`, `/activities/<id>/edit/`, namespace `performance`) y `templates/performance/partials/form_fields.html` como cuerpo de formulario compartido por las 4 entidades.
+
+**Cierra dos pendientes de la Decisión 21:** (a) `get_scoped_queryset()` usa `_default_manager`, que en las 4 entidades es el manager que excluye eliminados (Decisión 20); no hizo falta tocar el mixin y hay test (`test_soft_deleted_activity_is_not_listed`); (b) el orden del listado es `('-date', '-pk')`, y `-pk` desempata actividades del mismo día para que ninguna salte de página.
+
+**Supuestos a confirmar con el docente (no vienen de la rúbrica):**
+- La clave de duplicado de `Activity` (punto 4) y el formato del teléfono son criterios propios; cambiarlos toca solo `ActivityForm.clean()` y `clean_contact_phone()`.
+- El acceso es por Delegación, no por autoría: cualquier Funcionario de una Delegación edita todas sus actividades, igual que en el Admin.
+- `Activity.status` sigue siendo texto libre (pendiente de la Decisión 13), así que el formulario usa un campo de texto y no un desplegable.

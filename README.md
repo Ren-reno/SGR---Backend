@@ -129,6 +129,23 @@ negocio, solo las dos piezas que reutilizarán las 4 vistas de listado cuando se
 Ver Decisión 21 en `docs/decisiones.md` para el detalle completo, incluidos dos errores
 reales que aparecieron al probarlo por HTTP y quedaron corregidos con test de regresión.
 
+### Actividades (paso 6.1)
+
+Primer CRUD de negocio sobre esa base. Requiere sesión iniciada (sin ella redirige al login):
+
+| URL | Qué hace | Permiso de Django |
+|---|---|---|
+| `/activities/` | Listado paginado (5 / 15 / 30) de las actividades de tu Delegación | `view_activity` |
+| `/activities/new/` | Alta | `add_activity` |
+| `/activities/<id>/edit/` | Edición (una actividad de otra Delegación responde 404) | `change_activity` |
+
+Son los mismos permisos que ya asigna `seed_sgr` a cada grupo: **Administrador** hace todo;
+**Funcionario** y **Verificador** ven y editan, pero no crean; **Delegado** aún no tiene ninguno.
+La eliminación (SweetAlert2 + borrado lógico) llega en el patch final de la Fase 6.
+
+Tras iniciar sesión el sitio sigue redirigiendo a `admin:index` (`LOGIN_REDIRECT_URL`); el
+listado se abre entrando directo a `/activities/`. Ver Decisión 22 en `docs/decisiones.md`.
+
 ## Cuentas de prueba
 
 Credenciales ficticias, generadas por `seed_sgr` — nunca se usan credenciales personales en este

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Actividades{% endblock %}
+{% block body_class %} class="wide"{% endblock %}
+{% block content %}
+  <div class="toolbar">
+    <h1>Actividades</h1>
+    {% if perms.performance.add_activity %}
+      <a class="btn" href="{% url 'performance:activity_create' %}">Nueva actividad</a>
+    {% endif %}
+  </div>
+
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Funcionario</th>
+          <th>Período</th>
+          <th>Tipo de actividad</th>
+          <th>Atención</th>
+          <th>Meta</th>
+          <th>Estado</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for activity in activities %}
+          <tr>
+            <td>{{ activity.date|date:"d/m/Y" }}</td>
+            <td>{{ activity.employee }}</td>
+            <td>{{ activity.period.start_date|date:"d/m/Y" }} – {{ activity.period.end_date|date:"d/m/Y" }}</td>
+            <td>{{ activity.activity_type }}</td>
+            <td>{{ activity.attention }}</td>
+            <td>{{ activity.meta|default_if_none:"—" }}</td>
+            <td><span class="badge badge-neutral">{{ activity.status }}</span></td>
+            <td class="actions">
+              {% if perms.performance.change_activity %}
+                <a href="{% url 'performance:activity_update' activity.pk %}">Editar</a>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr class="empty-row"><td colspan="8">No hay actividades para mostrar.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% include "performance/partials/pagination.html" %}
+{% endblock %}

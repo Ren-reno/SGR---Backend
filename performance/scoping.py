@@ -21,6 +21,31 @@ dato que cambia por entidad es `delegation_lookup`; toda la lógica de
 from organization.models import Employee
 
 
+def scope_queryset_for_user(queryset, user, delegation_lookup):
+    """Acota `queryset` a lo que `user` puede ver, según su Delegación.
+
+    Es la única definición de la regla (superuser ve todo; cualquier otro,
+    solo su Delegación; anónimo o sin `Employee`, nada). La usan el mixin de
+    las vistas y los `ModelForm` (para acotar los desplegables de FK: sin
+    eso, quien puede editar un registro podría reasignarlo a una
+    Delegación ajena cambiando el valor en el POST).
+
+    `delegation_lookup` es el mismo prefijo del mixin: `""` para
+    Employee/Commitment, `"employee__"` para Activity, etc.
+    """
+    if not user.is_authenticated:
+        return queryset.none()
+    if user.is_superuser:
+        return queryset
+    try:
+        employee = user.employee
+    except Employee.DoesNotExist:
+        return queryset.none()
+    return queryset.filter(
+        **{f'{delegation_lookup}delegation_id': employee.delegation_id}
+    )
+
+
 class DelegationScopedQuerysetMixin:
     """Mixin para `ListView`/`UpdateView`/`DeleteView` basadas en clase.
 
@@ -82,27 +107,14 @@ class DelegationScopedQuerysetMixin:
         este método (no a `Model.objects.all()`) desde `get_queryset()`,
         para heredar filtros de estado (p. ej. excluir soft-deleted, cuando
         la Fase 3 lo agregue) sin que el scoping los pise ni viceversa."""
-        qs = self.model._default_manager.all()
-        user = self.request.user
-
-        # Sin `LoginRequiredMixin` (o si alguna vista lo omitiera), un
-        # visitante anónimo llega hasta acá como `AnonymousUser`, que ni
-        # siquiera tiene el descriptor de `Employee` -- acceder a
-        # `.employee` lanza AttributeError, no Employee.DoesNotExist. Se
-        # corta ANTES para no confiar en que la vista puso el mixin de
-        # login correctamente: el scoping es robusto por sí mismo.
-        if not user.is_authenticated:
-            return qs.none()
-
-        if user.is_superuser:
-            return qs
-
-        try:
-            employee = user.employee
-        except Employee.DoesNotExist:
-            return qs.none()
-
-        return qs.filter(**{self.get_delegation_field(): employee.delegation_id})
+        # get_delegation_field() lanza NotImplementedError si la subclase
+        # olvidó `delegation_lookup`; se llama antes de filtrar.
+        self.get_delegation_field()
+        return scope_queryset_for_user(
+            self.model._default_manager.all(),
+            self.request.user,
+            self.delegation_lookup,
+        )
 
     def get_queryset(self):
         qs = self.get_scoped_queryset()
