@@ -283,13 +283,15 @@ reemplaza las Decisiones 12 y 18 en lo que decían sobre no poder borrar `Valida
 ## Cuentas de prueba
 
 Credenciales ficticias, generadas por `seed_sgr` — nunca se usan credenciales personales en este
-repositorio (Decisión 5 de `docs/decisiones.md`).
+repositorio (Decisión 5 de `docs/decisiones.md`). Las contraseñas **no se publican en este
+repositorio**; se entregan aparte para la demostración (evidencia obligatoria del enunciado
+formativo, sección "Evidencias obligatorias").
 
-| Usuario | Contraseña | Rol (grupo) | Delegación |
-|---|---|---|---|
-| `admin_sgr` | `sgr-demo-2026` | Administrador (superuser) | Delegación Centro |
-| `funcionario_demo` | `sgr-demo-2026` | Funcionario | Delegación Norte |
-| `verificador_demo` | `sgr-demo-2026` | Verificador | Delegación Centro |
+| Usuario | Rol (grupo) | Delegación |
+|---|---|---|
+| `admin_sgr` | Administrador (superuser) | Delegación Centro |
+| `funcionario_demo` | Funcionario | Delegación Norte |
+| `verificador_demo` | Verificador | Delegación Centro |
 
 La contraseña se puede cambiar al correr el seed con `python manage.py seed_sgr --password <otra>`.
 
