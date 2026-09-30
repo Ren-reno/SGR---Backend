@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }}{% endblock %}
+{% block content %}
+  <div class="card">
+    <h1>{{ page_title }}</h1>
+    {% if object %}
+      {# review_status no se edita aquí: lo fija el flujo de validación (Decisión 23) #}
+      <p class="help">Estado de revisión: <strong>{{ object.review_status }}</strong> (lo cambia la validación, no este formulario).</p>
+    {% endif %}
+    {# enctype obligatorio: Evidence tiene un FileField; sin él el navegador no envía el archivo #}
+    <form method="post" enctype="multipart/form-data" novalidate>
+      {% csrf_token %}
+      {% include "performance/partials/form_fields.html" %}
+      <button type="submit" class="btn">Guardar</button>
+      <a class="btn-secondary" href="{% url 'performance:evidence_list' %}">Cancelar</a>
+    </form>
+  </div>
+{% endblock %}

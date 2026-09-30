@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Evidencias{% endblock %}
+{% block body_class %} class="wide"{% endblock %}
+{% block content %}
+  <div class="toolbar">
+    <h1>Evidencias</h1>
+    {% if perms.performance.add_evidence %}
+      <a class="btn" href="{% url 'performance:evidence_create' %}">Nueva evidencia</a>
+    {% endif %}
+  </div>
+
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Código</th>
+          <th>Fecha</th>
+          <th>Actividad</th>
+          <th>Funcionario</th>
+          <th>Archivo</th>
+          <th>Revisión</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for evidence in evidences %}
+          <tr>
+            <td>{{ evidence.code }}</td>
+            <td>{{ evidence.date|date:"d/m/Y" }}</td>
+            <td>#{{ evidence.activity.pk }} · {{ evidence.activity.activity_type }}</td>
+            <td>{{ evidence.activity.employee }}</td>
+            <td>
+              {% if evidence.file %}
+                <a href="{{ evidence.file.url }}" target="_blank" rel="noopener">Ver archivo</a>
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              {# review_status es texto libre (Decisión 13): el seed guarda "Pendiente" y el modelo "pendiente", por eso se compara en minúsculas #}
+              {% with status=evidence.review_status|lower %}
+                <span class="badge {% if status == 'aprobada' %}badge-ok{% elif status == 'rechazada' %}badge-err{% elif status == 'pendiente' %}badge-warn{% else %}badge-neutral{% endif %}">{{ evidence.review_status }}</span>
+              {% endwith %}
+            </td>
+            <td class="actions">
+              {% if perms.performance.change_evidence %}
+                <a href="{% url 'performance:evidence_update' evidence.pk %}">Editar</a>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr class="empty-row"><td colspan="7">No hay evidencias para mostrar.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% include "performance/partials/pagination.html" %}
+{% endblock %}

@@ -560,3 +560,32 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 - La clave de duplicado de `Activity` (punto 4) y el formato del teléfono son criterios propios; cambiarlos toca solo `ActivityForm.clean()` y `clean_contact_phone()`.
 - El acceso es por Delegación, no por autoría: cualquier Funcionario de una Delegación edita todas sus actividades, igual que en el Admin.
 - `Activity.status` sigue siendo texto libre (pendiente de la Decisión 13), así que el formulario usa un campo de texto y no un desplegable.
+
+---
+
+### Decisión 23 — CRUD web de Evidence: listar, crear y editar (Fase 6, paso 6.2)
+
+**Origen:** segundo de los 4 CRUD web (paso 6.3 del plan). Repite el patrón fijado en 6.0/6.1 sin rediseñarlo: `views/evidence.py`, `EvidenceForm` en `forms.py`, rutas en `urls.py`, `evidence_list.html` y `evidence_form.html`, y `tests_evidence_web.py`. La eliminación sigue fuera: va en el patch final.
+
+**Decisión:**
+1. **Permisos = los de modelo** (`view_/add_/change_evidence`), igual que en 6.1. Con lo que asigna `seed_sgr`: Administrador todo; Funcionario y Verificador ven y editan; **crear una evidencia hoy solo puede el Administrador**; Delegado ninguno. `delegation_lookup = "activity__employee__"` en listado y edición; orden `('-date', '-pk')`.
+2. **`code` (clave primaria) es inmutable al editar.** RN-010 lo exige ("únicos, inmutables"), y además es una trampa técnica: si el formulario dejara editar la clave primaria, `save()` insertaría una fila nueva y dejaría la original intacta. Por eso el campo queda `disabled` en la edición (Django ignora lo que llegue por POST) y `clean_code()` no le re-aplica el formato, para que una evidencia antigua con un código "raro" siga siendo editable. Hay test de que un POST con otro código no crea ninguna fila.
+3. **`review_status` queda fuera del formulario.** Es el resultado del flujo de validación (Decisión 9-bis), no un dato que cargue quien sube la evidencia: con el campo editable, un Funcionario (que tiene `change_evidence`) podría marcar su propia evidencia como "Aprobada" y saltarse la regla RN-009 ("solo una validación aprobada otorga el punto"). Al crear toma el default del modelo. En la edición se muestra como dato de solo lectura.
+4. **Código al crear:** solo letras, dígitos, `-` y `_` (RF-011: "utilizable para nombrar y vincular" el archivo). El duplicado se revisa contra `Evidence.all_objects` y sin distinguir mayúsculas: una evidencia eliminada lógicamente sigue ocupando la clave primaria (Decisión 20), y `EVID-001` / `evid-001` no deben ser dos evidencias distintas. `SoftDeleteModel.validate_unique` ya frenaba el código idéntico; la variante con otras mayúsculas solo la frena el formulario, y tiene su test.
+5. **Fecha:** no puede ser futura ni anterior a la de su actividad (`clean()` del formulario; el modelo no tiene `clean()` propio).
+6. **`activity` acotado por Delegación** con `scope_queryset_for_user(..., 'employee__')`, por la misma razón que `employee` en 6.1: la vista acota lo que se ve, no lo que se escribe. Las opciones se rotulan con id, fecha, funcionario y tipo, porque `Activity.__str__` no alcanza para distinguir dos actividades.
+7. **Archivo:** obligatorio al crear; al editar, si no se sube otro, se conserva el actual (el formulario ya lo resuelve). Los templates del formulario llevan `enctype="multipart/form-data"`; `CreateView`/`UpdateView` ya pasan `request.FILES` al formulario. **No se valida tamaño, extensión ni contenido real: es la Fase 8.**
+8. **URL de edición con `<path:pk>`, no `<str:pk>`.** El Admin permite códigos con cualquier carácter, `/` incluido; con `str`, un solo código así haría fallar el listado completo con `NoReverseMatch` al armar el enlace "Editar". Hay test con un código `A/B`.
+
+**Verificado:** 47 tests nuevos en `performance/tests_evidence_web.py` (permisos por rol, scoping en listado y edición, alta y edición con archivo real en un `MEDIA_ROOT` temporal, código inmutable, duplicados, fechas, reasignación a actividad ajena, `review_status` no editable por POST). Por HTTP real con las 3 cuentas del seed: listado por rol, alta con errores y alta válida con archivo (multipart), POST sin CSRF (403), evidencia ajena (404 en GET y POST), `?per_page=5`, `99` y `abc` sin error, y el log sin 500 ni `UnorderedObjectListWarning`. Se rompió a propósito cada defensa (acotado de `activity`, `disabled` del código, exclusión de `review_status`, `all_objects` en el duplicado, `<path:pk>`, regla de fecha) y cada una hizo fallar el test correspondiente. Esa comprobación mostró que el test del duplicado eliminado pasaba aunque se rompiera el chequeo del formulario (lo cubría el modelo), y se agregó el de la variante con otras mayúsculas.
+
+**Supuestos a confirmar con el docente (no vienen de la rúbrica):**
+- Las reglas de fecha (punto 5), el formato del código (punto 4) y no distinguir mayúsculas en el duplicado son criterios propios; cambiarlos toca solo `EvidenceForm`.
+- **RF-011 pide que el sistema *genere* el código;** el modelo lo tiene como texto que se escribe (así también en el Admin). Este patch lo deja escribible; generarlo (p. ej. `EVID-NNN` correlativo) es un cambio aparte que requiere cuidar la concurrencia.
+- El acceso es por Delegación, no por autoría, igual que en 6.1.
+
+**Pendientes que deja este patch:**
+- [ ] **Para 6.3 (`Validation`):** al crear o editar una validación por la web, hay que actualizar `Evidence.review_status` como ya hace la acción del Admin (Decisión 9-bis). Aquí se sacó del formulario justamente porque lo debe fijar esa vía.
+- [ ] `review_status` es texto libre y hay dos grafías en los datos: el default del modelo es `pendiente` y el seed guarda `Pendiente`. El listado compara en minúsculas para el color de la etiqueta; unificarlo es parte de la Decisión 13 pendiente (choices).
+- [ ] **Los archivos de `/media/` se sirven sin sesión** (`static()` en `config/urls.py`, solo con `DEBUG`): quien conozca la ruta abre el archivo de otra Delegación. Ya era así con el Admin; la vista web solo pone el enlace donde el usuario lo ve. Resolverlo (vista de descarga con permiso y scoping) queda para la Fase 8 o el despliegue.
+- [ ] Al reemplazar el archivo de una evidencia, el anterior queda en disco (Django no lo borra). Limpieza de archivos huérfanos: Fase 8.

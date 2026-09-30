@@ -146,6 +146,32 @@ La eliminación (SweetAlert2 + borrado lógico) llega en el patch final de la Fa
 Tras iniciar sesión el sitio sigue redirigiendo a `admin:index` (`LOGIN_REDIRECT_URL`); el
 listado se abre entrando directo a `/activities/`. Ver Decisión 22 en `docs/decisiones.md`.
 
+### Evidencias (paso 6.2)
+
+Mismo patrón que Actividades, sobre `Evidence`:
+
+| URL | Qué hace | Permiso de Django |
+|---|---|---|
+| `/evidences/` | Listado paginado (5 / 15 / 30) de las evidencias de tu Delegación, con enlace al archivo | `view_evidence` |
+| `/evidences/new/` | Alta con archivo (formulario `multipart/form-data`) | `add_evidence` |
+| `/evidences/<código>/edit/` | Edición (una evidencia de otra Delegación responde 404) | `change_evidence` |
+
+Con lo que asigna `seed_sgr`: **Administrador** hace todo; **Funcionario** y **Verificador** ven y
+editan, pero no crean (crear evidencias hoy es solo del Administrador); **Delegado** no tiene ninguno.
+
+Tres particularidades de `Evidence` que conviene conocer antes de la demo:
+
+- **El código es la clave primaria y no se puede cambiar** (RN-010): al editar, el campo aparece
+  deshabilitado. Al crear solo admite letras, dígitos, `-` y `_`, y no puede repetir un código
+  existente (sin distinguir mayúsculas), ni uno de una evidencia eliminada.
+- **El estado de revisión no se edita aquí.** Lo fija el flujo de validación; si el formulario lo
+  permitiera, quien carga una evidencia podría marcarla "Aprobada" (RN-009).
+- **El archivo se exige al crear**; al editar, si no se sube otro se conserva el actual. La
+  validación de tamaño, extensión y contenido real del archivo llega en la Fase 8.
+
+La fecha de la evidencia no puede ser futura ni anterior a la de su actividad. Ver Decisión 23 en
+`docs/decisiones.md`.
+
 ## Cuentas de prueba
 
 Credenciales ficticias, generadas por `seed_sgr` — nunca se usan credenciales personales en este

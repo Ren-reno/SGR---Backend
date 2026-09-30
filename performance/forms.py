@@ -1,5 +1,6 @@
 """ModelForms del CRUD web (Fase 6). Un formulario por entidad; 6.1 agrega
-`ActivityForm`, y 6.2 a 6.4 agregan los suyos a este mismo archivo.
+`ActivityForm`, 6.2 `EvidenceForm`, y 6.3 y 6.4 agregan los suyos a este mismo
+archivo.
 
 Las validaciones de servidor viven acá y en el `clean()` del modelo, no en el
 template ni en JavaScript: lo que el navegador valide es comodidad, lo que
@@ -8,9 +9,10 @@ importa es lo que el servidor rechaza.
 import re
 
 from django import forms
+from django.utils import timezone
 
 from organization.models import Employee
-from .models import Activity, CatalogItem, Meta
+from .models import Activity, CatalogItem, Evidence, Meta
 from .scoping import scope_queryset_for_user
 
 # Solo dígitos y los separadores habituales de un teléfono; al menos 7
@@ -114,5 +116,126 @@ class ActivityForm(forms.ModelForm):
                 raise forms.ValidationError(
                     'Ya existe una actividad con el mismo funcionario, '
                     'fecha, tipo y solicitud.'
+                )
+        return cleaned
+
+
+# RF-011: el código de evidencia debe servir "para nombrar y vincular" el
+# archivo, así que se limita a letras, dígitos, guion y guion bajo (sin
+# espacios ni "/"). Solo se exige al crear; ver EvidenceForm.clean_code().
+_EVIDENCE_CODE_CHARS = re.compile(r'^[A-Za-z0-9_-]+$')
+
+
+def _activity_label(activity):
+    """Texto del desplegable `activity`: `Activity.__str__` solo trae el id y
+    el tipo, insuficiente para distinguir dos actividades al elegir una."""
+    return (
+        f'#{activity.pk} · {activity.date:%d/%m/%Y} · '
+        f'{activity.employee} · {activity.activity_type}'
+    )
+
+
+class EvidenceForm(forms.ModelForm):
+    """Alta y edición de `Evidence` (paso 6.2).
+
+    Igual que `ActivityForm`, recibe `user` para acotar el desplegable
+    `activity` a la Delegación de quien escribe: sin eso, quien puede editar
+    una evidencia podría colgarla de una actividad ajena cambiando el valor
+    en el POST (la vista solo acota qué registros ve, no qué valores escribe).
+
+    Lo que este formulario decide distinto al de Activity, por cómo es el
+    modelo:
+
+    - `code` es la clave primaria y es inmutable (RN-010). Al editar queda
+      `disabled`: Django ignora lo que llegue por POST para ese campo. Sin
+      eso, cambiar el código en el POST haría que `save()` insertara una fila
+      nueva y dejara la original intacta.
+    - `review_status` NO está en el formulario. Es el resultado del flujo de
+      validación (Decisión 9-bis: lo actualiza quien valida, no quien carga),
+      y dejarlo editable permitiría a un Funcionario marcar su propia
+      evidencia como "Aprobada" (RN-009). Al crear toma el default del modelo.
+    - El archivo se exige al crear; al editar, si no se sube otro, se conserva
+      el actual. Tamaño, extensión y contenido real del archivo NO se validan
+      aquí: eso es la Fase 8.
+    """
+
+    class Meta:
+        model = Evidence
+        fields = ('code', 'activity', 'file', 'date', 'metadata')
+        labels = {
+            'code': 'Código',
+            'activity': 'Actividad',
+            'file': 'Archivo',
+            'date': 'Fecha',
+            'metadata': 'Metadatos',
+        }
+        help_texts = {
+            'code': 'Único e inmutable. Solo letras, dígitos, guion y guion bajo.',
+            'date': 'No puede ser futura ni anterior a la fecha de la actividad.',
+            'metadata': 'Opcional: descripción del archivo, cámara, lugar, etc.',
+        }
+        widgets = {
+            'date': forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
+            'metadata': forms.Textarea(attrs={'rows': 3}),
+        }
+
+    def __init__(self, *args, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+        self.fields['activity'].queryset = scope_queryset_for_user(
+            Activity.objects.select_related('employee'), user,
+            delegation_lookup='employee__',
+        ).order_by('-date', '-pk')
+        self.fields['activity'].label_from_instance = _activity_label
+        # Textos del widget de archivo en español (los de Django salen en
+        # inglés porque LANGUAGE_CODE es en-us).
+        self.fields['file'].widget.initial_text = 'Archivo actual'
+        self.fields['file'].widget.input_text = 'Reemplazar por'
+        if not self.instance._state.adding:
+            self.fields['code'].disabled = True
+            self.fields['code'].help_text = (
+                'El código no se puede cambiar una vez creada la evidencia.'
+            )
+
+    def clean_code(self):
+        if not self.instance._state.adding:
+            # Campo deshabilitado: el valor es el de la fila, no uno escrito.
+            # No se le re-aplica el formato, para que una evidencia antigua
+            # con un código "raro" (creada desde el Admin) siga editable.
+            return self.instance.pk
+        code = self.cleaned_data['code']
+        if not _EVIDENCE_CODE_CHARS.match(code):
+            raise forms.ValidationError(
+                'Use solo letras, dígitos, guion (-) y guion bajo (_), '
+                'sin espacios.'
+            )
+        # `all_objects`, no `objects`: una evidencia eliminada lógicamente
+        # sigue ocupando la clave primaria (Decisión 20), así que su código
+        # tampoco se puede reutilizar. `iexact` evita "EVID-001" y "evid-001"
+        # como dos evidencias distintas.
+        clash = Evidence.all_objects.filter(code__iexact=code).first()
+        if clash is not None:
+            if clash.deleted_at is not None:
+                raise forms.ValidationError(
+                    'Ese código perteneció a una evidencia eliminada y no '
+                    'se puede reutilizar.'
+                )
+            raise forms.ValidationError('Ya existe una evidencia con ese código.')
+        return code
+
+    def clean(self):
+        cleaned = super().clean()
+        activity = cleaned.get('activity')
+        date = cleaned.get('date')
+        if date:
+            # `localdate()` usa TIME_ZONE (UTC): Chile va por detrás de UTC,
+            # así que la fecha local de un usuario nunca supera a esta.
+            if date > timezone.localdate():
+                self.add_error('date', 'La fecha de la evidencia no puede ser futura.')
+            elif activity and date < activity.date:
+                self.add_error(
+                    'date',
+                    'La fecha de la evidencia no puede ser anterior a la de '
+                    f'su actividad ({activity.date:%d/%m/%Y}).',
                 )
         return cleaned
