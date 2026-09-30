@@ -1,13 +1,13 @@
-"""CRUD web de Evidence (Fase 6, paso 6.2): listar, crear y editar.
+"""CRUD web de Evidence: listar, crear y editar (Fase 6, paso 6.2) y eliminar
+(Fase 6, paso 6.3 / Fase 7, Decisión 28).
 
-Mismo patrón que `views/activity.py`; la eliminación (SweetAlert2 + borrado
-lógico) llega en el patch final.
+Mismo patrón que `views/activity.py`.
 
 Capas de control, todas del lado del servidor:
 - Permiso de modelo (`PermissionRequiredMixin`): los mismos que usa el Admin y
   asigna `seed_sgr` -- Funcionario y Verificador ven y editan, solo
-  Administrador crea; Delegado no tiene ninguno. Sin sesión redirige al login;
-  con sesión pero sin permiso responde 403.
+  Administrador crea y elimina; Delegado no tiene ninguno. Sin sesión redirige
+  al login; con sesión pero sin permiso responde 403.
 - Scoping por Delegación (`DelegationScopedQuerysetMixin`): en el listado
   filtra las filas; en la edición hace que una evidencia ajena responda 404.
 - Valores escritos: `EvidenceForm` acota el desplegable `activity`.
@@ -22,6 +22,7 @@ from django.contrib.messages.views import SuccessMessageMixin
 from django.urls import reverse_lazy
 from django.views.generic import CreateView, ListView, UpdateView
 
+from performance.deletion import SoftDeleteView
 from performance.forms import EvidenceForm
 from performance.models import Evidence
 from performance.pagination import SessionPaginationMixin
@@ -75,3 +76,18 @@ class EvidenceUpdateView(
     delegation_lookup = 'activity__employee__'
     success_message = 'Evidencia actualizada.'
     extra_context = {'page_title': 'Editar evidencia'}
+
+
+class EvidenceDeleteView(SoftDeleteView):
+    """Borrado lógico (`deleted_at`). Eliminar una evidencia elimina también
+    su validación, si la tiene (`Evidence._before_soft_delete`, Decisión 26
+    punto 2): por eso el botón del listado lo avisa antes de confirmar.
+
+    La clave primaria es el código (texto), así que la ruta usa `<path:pk>`,
+    igual que la de edición.
+    """
+    model = Evidence
+    permission_required = 'performance.delete_evidence'
+    delegation_lookup = 'activity__employee__'
+    success_url = reverse_lazy('performance:evidence_list')
+    success_message = 'Evidencia eliminada.'

@@ -39,6 +39,10 @@
               {% if perms.performance.change_commitment %}
                 <a href="{% url 'performance:commitment_update' commitment.pk %}">Editar</a>
               {% endif %}
+              {% if perms.performance.delete_commitment %}
+                {% url 'performance:commitment_delete' commitment.pk as delete_url %}
+                {% include "performance/partials/delete_button.html" with url=delete_url title="¿Eliminar este compromiso?" detail=commitment %}
+              {% endif %}
             </td>
           </tr>
         {% empty %}
@@ -49,4 +53,9 @@
   </div>
 
   {% include "performance/partials/pagination.html" %}
+{% endblock %}
+{% block extra_js %}
+  {% if perms.performance.delete_commitment %}
+    {% include "performance/partials/delete_scripts.html" %}
+  {% endif %}
 {% endblock %}

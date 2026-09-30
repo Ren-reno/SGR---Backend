@@ -1,13 +1,14 @@
-"""CRUD web de Commitment (Fase 6, paso 6.4): listar, crear y editar.
+"""CRUD web de Commitment: listar, crear y editar (Fase 6, paso 6.4) y
+eliminar (Fase 6, paso 6.3 / Fase 7, Decisión 28).
 
-Mismo patrón que `views/activity.py` (6.1); la eliminación (SweetAlert2 +
-borrado lógico) llega en el patch final.
+Mismo patrón que `views/activity.py` (6.1).
 
 Capas de control, todas del lado del servidor:
 - Permiso de modelo (`PermissionRequiredMixin`): los mismos que ya usa el
   Admin y asigna `seed_sgr` (Decisión 18) -- Administrador y Funcionario
-  ven, crean y editan; Verificador y Delegado no tienen ninguno, así que
-  reciben 403. Sin sesión redirige al login.
+  ven, crean y editan (solo el Administrador elimina); Verificador y
+  Delegado no tienen ninguno, así que reciben 403. Sin sesión redirige al
+  login.
 - Scoping por Delegación (`DelegationScopedQuerysetMixin`): en el listado
   filtra las filas; en la edición hace que un compromiso ajeno responda 404.
   Se filtra por `Commitment.delegation` (la propia del compromiso, no la de
@@ -20,6 +21,7 @@ from django.contrib.messages.views import SuccessMessageMixin
 from django.urls import reverse_lazy
 from django.views.generic import CreateView, ListView, UpdateView
 
+from performance.deletion import SoftDeleteView
 from performance.forms import CommitmentForm
 from performance.models import Commitment
 from performance.pagination import SessionPaginationMixin
@@ -74,3 +76,15 @@ class CommitmentUpdateView(
     delegation_lookup = ''
     success_message = 'Compromiso actualizado.'
     extra_context = {'page_title': 'Editar compromiso'}
+
+
+class CommitmentDeleteView(SoftDeleteView):
+    """Borrado lógico (`deleted_at`). `Commitment` no tiene reglas propias
+    de borrado (ni hijos ni `ProtectedError`): solo permiso y Delegación,
+    igual que `CommitmentAdmin` (Decisión 18). Se acota por
+    `Commitment.delegation`, no por la de su responsable."""
+    model = Commitment
+    permission_required = 'performance.delete_commitment'
+    delegation_lookup = ''  # FK directa: Commitment.delegation
+    success_url = reverse_lazy('performance:commitment_list')
+    success_message = 'Compromiso eliminado.'

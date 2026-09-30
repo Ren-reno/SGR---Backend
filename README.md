@@ -162,9 +162,11 @@ Mismo patrón que Actividades, sobre `Evidence`:
 | `/evidences/` | Listado paginado (5 / 15 / 30) de las evidencias de tu Delegación, con enlace al archivo | `view_evidence` |
 | `/evidences/new/` | Alta con archivo (formulario `multipart/form-data`) | `add_evidence` |
 | `/evidences/<código>/edit/` | Edición (una evidencia de otra Delegación responde 404) | `change_evidence` |
+| `/evidences/<código>/delete/` | Eliminación lógica: solo `POST`, con confirmación SweetAlert2 (ver *Eliminación*) | `delete_evidence` |
 
 Con lo que asigna `seed_sgr`: **Administrador** hace todo; **Funcionario** y **Verificador** ven y
-editan, pero no crean (crear evidencias hoy es solo del Administrador); **Delegado** no tiene ninguno.
+editan, pero no crean ni eliminan (crear y eliminar evidencias hoy es solo del Administrador); **Delegado**
+no tiene ninguno.
 
 Tres particularidades de `Evidence` que conviene conocer antes de la demo:
 
@@ -199,8 +201,9 @@ Delegación; **Funcionario** y **Delegado** no acceden. Reglas que valida el ser
 - Al editar, la evidencia no se puede cambiar.
 
 Crear o editar una validación **no** cambia el estado de revisión de la evidencia (solo lo hace la
-acción "aprobar evidencias en lote" del Admin). La eliminación (SweetAlert2 + borrado lógico) llega
-en el patch final. Ver Decisión 24 en `docs/decisiones.md`, incluidos los supuestos por confirmar.
+acción "aprobar evidencias en lote" del Admin). La eliminación de validaciones desde la web llega
+en el patch 15 (opcional); mientras tanto una validación solo se elimina junto con su evidencia o desde el
+Admin. Ver Decisión 24 en `docs/decisiones.md`, incluidos los supuestos por confirmar.
 
 ### Compromisos (paso 6.4)
 
@@ -211,20 +214,21 @@ Mismo patrón que Actividades. Requiere sesión iniciada (sin ella redirige al l
 | `/commitments/` | Listado paginado (5 / 15 / 30) de los compromisos de tu Delegación | `view_commitment` |
 | `/commitments/new/` | Alta | `add_commitment` |
 | `/commitments/<id>/edit/` | Edición (un compromiso de otra Delegación responde 404) | `change_commitment` |
+| `/commitments/<id>/delete/` | Eliminación lógica: solo `POST`, con confirmación SweetAlert2 (ver *Eliminación*) | `delete_commitment` |
 
 Permisos según `seed_sgr` (Decisión 18): **Administrador** y **Funcionario** ven, crean y editan
-(el Funcionario, solo de su Delegación); **Verificador** y **Delegado** reciben 403. Los
+(el Funcionario, solo de su Delegación) y solo el Administrador elimina; **Verificador** y **Delegado** reciben 403. Los
 desplegables *Delegación* y *Responsable* solo ofrecen la Delegación propia y sus empleados; la
 Delegación del responsable debe coincidir con la elegida. Además se valida que la fecha
 comprometida no sea anterior a hoy (al registrar o al cambiarla) y que no exista otro compromiso
-con el mismo responsable, fecha, origen, solicitante y territorio. La eliminación llega en el
-patch final. Ver Decisión 25 en `docs/decisiones.md`, que también lista los supuestos sin
+con el mismo responsable, fecha, origen, solicitante y territorio. La eliminación se describe en la sección
+*Eliminación* (Decisión 28). Ver Decisión 25 en `docs/decisiones.md`, que también lista los supuestos sin
 confirmar (uno de ellos, sobre la zona horaria, quedó resuelto en la Decisión 27).
 
-### Eliminación (Fase 7, patch 12)
+### Eliminación (Fase 7, patches 12 y 14)
 
-Cada fila del listado muestra un botón **Eliminar** solo a quien tiene el permiso `delete_<modelo>`
-(hoy solo el grupo **Administrador**). Al pulsarlo aparece una confirmación de **SweetAlert2**; solo si
+Cada fila del listado de Actividades, Evidencias y Compromisos muestra un botón **Eliminar** solo a
+quien tiene el permiso `delete_<modelo>` (hoy solo el grupo **Administrador**). Al pulsarlo aparece una confirmación de **SweetAlert2**; solo si
 se confirma se envía un formulario `POST` con token CSRF.
 
 - **La confirmación no es la seguridad.** El servidor vuelve a verificar todo en cada `POST`: sin sesión
@@ -232,17 +236,21 @@ se confirma se envía un formulario `POST` con token CSRF.
   CSRF 403 y un `GET` a la URL de eliminar 405.
 - **Borrado lógico:** el registro no se borra, se marca `deleted_at` y deja de aparecer en el sistema
   (`performance/soft_delete.py`). Una actividad con evidencias vivas no se puede eliminar: se muestra un
-  mensaje pidiendo eliminar primero sus evidencias.
+  mensaje pidiendo eliminar primero sus evidencias, que ahora se eliminan desde `/evidences/`; el orden
+  completo (evidencias y luego actividad) se hace desde la web.
+- **Al eliminar una evidencia también se elimina su validación**, si la tiene. El diálogo lo avisa siempre
+  ("Si tiene una validación, también se eliminará."), tenga o no validación, para no consultarlo fila por
+  fila en el listado. Un compromiso no tiene efectos en cascada.
 - **Sin CDN:** SweetAlert2 v11.26.25 (MIT) viaja dentro del repositorio, en
   `performance/static/performance/vendor/sweetalert2/`, junto con su licencia. Sin JavaScript el botón no
   elimina nada.
-- **Estado por entidad:** `Activity` listo (este patch). `Evidence` y `Commitment` en el patch 13 y
-  `Validation` en el 14, después de sus CRUD.
+- **Estado por entidad:** `Activity` (patch 12), `Evidence` y `Commitment` (patch 14) listos.
+  `Validation` llega en el patch 15 (opcional).
 - **Estáticos y despliegue:** es el primer archivo estático del proyecto. Con `DEBUG=True`, `runserver` lo
   sirve; para el despliegue hará falta `STATIC_ROOT` y `collectstatic` (pendiente de la Fase 9).
 
-Ver Decisión 26 en `docs/decisiones.md`, que también registra el borrado lógico de la Fase 3 y reemplaza
-las Decisiones 12 y 18 en lo que decían sobre no poder borrar `Validation` ni `Commitment`.
+Ver Decisiones 26 y 28 en `docs/decisiones.md`; la 26 también registra el borrado lógico de la Fase 3 y
+reemplaza las Decisiones 12 y 18 en lo que decían sobre no poder borrar `Validation` ni `Commitment`.
 
 ## Cuentas de prueba
 

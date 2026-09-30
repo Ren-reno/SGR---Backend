@@ -660,14 +660,14 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 **Decisión (borrado lógico, Fase 3, registrada aquí):**
 1. **Entidades eliminables:** `Activity`, `Evidence`, `Validation` y `Commitment`. Patrón `SoftDeleteModel` (`performance/soft_delete.py`): campo `deleted_at`; `objects` excluye los eliminados y es el primer manager (por eso es el `_default_manager`: listados, desplegables y relaciones inversas los ocultan solos); `all_objects` los incluye; `obj.delete()` y `queryset.delete()` solo marcan `deleted_at`; `restore()` los vuelve a mostrar; `hard_delete()` es el único camino al borrado físico y ningún flujo lo usa.
 2. **Reglas de cascada del modelo:** una `Activity` con evidencias vivas no se elimina (`ProtectedError`, respeta el `PROTECT` de la Decisión 8); eliminar una `Evidence` elimina también su `Validation` (`CASCADE` de la Decisión 8).
-3. **Reemplaza a la Decisión 12 y a la regla de "sin borrado" de la Decisión 18.** Ambas existían para no perder el rastro de una revisión o un compromiso; con borrado lógico la fila se conserva, así que esa razón ya no aplica. Los permisos `delete_activity`, `delete_evidence`, `delete_validation` y `delete_commitment` los tiene solo Administrador (`seed_sgr`). `ValidationAdmin` agrega reglas de rol y Delegación; la web las reproducirá en el patch 14.
+3. **Reemplaza a la Decisión 12 y a la regla de "sin borrado" de la Decisión 18.** Ambas existían para no perder el rastro de una revisión o un compromiso; con borrado lógico la fila se conserva, así que esa razón ya no aplica. Los permisos `delete_activity`, `delete_evidence`, `delete_validation` y `delete_commitment` los tiene solo Administrador (`seed_sgr`). `ValidationAdmin` agrega reglas de rol y Delegación; la web las reproducirá en el patch 15 (opcional).
 
 **Decisión (eliminación web, este patch):**
 4. **`SoftDeleteView`** (`performance/deletion.py`), vista base que reutilizan las 4 entidades; cada una declara `model`, `permission_required`, `delegation_lookup`, `success_url` y el mensaje de éxito. Capas, todas del lado del servidor: solo `POST` (un `GET` responde 405); autenticación y permiso de modelo (sin sesión redirige al login, sin permiso 403); scoping por Delegación (un registro ajeno responde 404); `object.delete()` = borrado lógico; un `ProtectedError` se muestra como mensaje en el listado, no como 500.
 5. **SweetAlert2 v11.26.25 (MIT), copia local** en `performance/static/performance/vendor/sweetalert2/` (bundle `sweetalert2.all.min.js`, que incluye su CSS, más su `LICENSE`). Sin CDN, por el mismo criterio de la Decisión 20 punto 6 (login): el sitio debe funcionar sin salida a internet. Solo se descarga si la persona tiene el permiso de eliminar.
 6. **Botón `type="button"` que envía el formulario `POST` (con token CSRF) solo tras confirmar** (`performance/js/confirm-delete.js`, parciales `delete_button.html` y `delete_scripts.html`). Título y texto se pasan con `titleText`/`text` (texto plano), nunca con `title`/`html`, porque incluyen datos del registro y SweetAlert2 no sanea HTML. Tras confirmar se deshabilita el botón para evitar el doble envío. Si SweetAlert2 no cargó, se usa `window.confirm()`.
 7. Al eliminar se vuelve al listado (página 1) con un mensaje de éxito, de error (registro protegido) o informativo (ya estaba eliminado).
-8. **Este patch entrega `Activity`.** `Evidence` y `Commitment` van en el patch 13 y `Validation` en el 14, cada uno después de que exista su CRUD (6.2, 6.4 y 6.3). Van al final porque necesitan archivos que esos patches crean y, en el caso de `Validation`, las reglas de rol de 6.3.
+8. **Este patch entrega `Activity`.** `Evidence` y `Commitment` se entregaron después, en el patch 14 (Decisión 28); `Validation` va en el patch 15 (opcional). La numeración cambió porque la portada pasó a ser el patch 13 (Decisión 27). Cada uno va después de que exista su CRUD (6.2, 6.4 y 6.3). Van al final porque necesitan archivos que esos patches crean y, en el caso de `Validation`, las reglas de rol de 6.3.
 
 **Justificación:**
 - **La confirmación visual no protege nada; el servidor sí.** Un `POST` armado a mano, sin JavaScript, recibe exactamente las mismas verificaciones. Los tests eliminan por HTTP sin pasar por el diálogo: sin sesión redirige al login, sin permiso 403, registro de otra Delegación 404, sin token CSRF 403, con `GET` 405.
@@ -681,7 +681,7 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 **Limitaciones conocidas (no resueltas a propósito):**
 - **No hay forma de restaurar desde la web ni el Admin.** `restore()` existe en el modelo, pero el Admin usa el manager que excluye eliminados, así que solo se puede restaurar desde la consola.
 - **Primer archivo estático del proyecto.** Con `DEBUG=True` `runserver` los sirve; el despliegue (Fase 9) necesitará `STATIC_ROOT`, `collectstatic` y algo que sirva los estáticos con `DEBUG=False`. `.gitignore` ya ignora `/staticfiles/`.
-- Mientras no exista la eliminación de `Evidence` en la web (patch 13), el mensaje "Elimine primero sus evidencias" de una `Activity` solo puede cumplirse desde el Admin.
+- ~~Mientras no exista la eliminación de `Evidence` en la web, el mensaje "Elimine primero sus evidencias" de una `Activity` solo puede cumplirse desde el Admin.~~ Resuelta por el patch 14 (Decisión 28): las evidencias se eliminan desde `/evidences/`.
 - Sin JavaScript no se puede eliminar (efecto buscado del punto 6).
 
 **Alternativas descartadas:** `DeleteView` estándar con página de confirmación por `GET`; CDN de SweetAlert2; `type="submit"` con la confirmación como mejora progresiva (falla abierto); pasar título y texto como HTML.
@@ -716,3 +716,42 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 - La portada no muestra contadores ni resúmenes; es solo un índice de listados.
 
 **Alternativas descartadas:** login a `/activities/`; redirects por grupo; dejar `LOGIN_REDIRECT_URL = 'admin:index'`; quitar las reglas de fecha de los formularios; dejar `TIME_ZONE = 'UTC'`.
+
+### Decisión 28 — Eliminación web de `Evidence` y `Commitment` (Fase 6 paso 6.3 / Fase 7, patch 14)
+
+**Origen:** paso 6.3 del plan (eliminar de forma lógica dentro de cada uno de los 4 CRUD) y pasos 7.1 y 7.2 (confirmación con SweetAlert2; envío por `POST` con CSRF; el servidor vuelve a verificar autenticación, permiso y scoping). La Decisión 26 solo citaba los pasos 7.1 y 7.2 y no el 6.3, que es el que exige la eliminación dentro de cada CRUD; este patch los cita a los tres. Diseño aprobado por el equipo el 29-sep-2026. Repite el patrón de la Decisión 26 sin cambiar `SoftDeleteView`.
+
+**Decisión:**
+1. **`EvidenceDeleteView` y `CommitmentDeleteView`** son subclases mínimas de `SoftDeleteView` (Decisión 26 punto 4): solo declaran `model`, `permission_required`, `delegation_lookup`, `success_url` y el mensaje de éxito.
+
+   | Entidad | Ruta | Permiso | `delegation_lookup` |
+   |---|---|---|---|
+   | `Evidence` | `evidences/<path:pk>/delete/` | `delete_evidence` | `"activity__employee__"` |
+   | `Commitment` | `commitments/<int:pk>/delete/` | `delete_commitment` | `""` |
+
+2. **La ruta de `Evidence` usa `<path:pk>`**, igual que la de edición: la clave primaria es el código (texto) y el Admin admite códigos con `/`. Con `<str:pk>` un solo código así haría fallar el listado entero (`NoReverseMatch` al armar el formulario).
+3. **`Commitment` no tiene regla propia de borrado**: ni hijos ni `ProtectedError`. Solo permiso y Delegación, igual que `CommitmentAdmin` (Decisión 18). Se acota por `Commitment.delegation` y no por la Delegación de su responsable actual, como el listado.
+4. **Al eliminar una `Evidence` se elimina también su `Validation`** (`Evidence._before_soft_delete`, Decisión 26 punto 2). Ya existía en el modelo; este patch permite provocarla desde la web, así que el diálogo la avisa.
+5. **El parcial `delete_button.html` recibe un parámetro opcional `extra`**, que agrega una frase al texto del diálogo. Para `Evidence` dice "Si tiene una validación, también se eliminará." Sin `extra` el texto es idéntico al del patch 12. `extra` se escapa con `force_escape` porque Django no escapa los literales de plantilla y una comilla en él cerraría el atributo `data-text`.
+6. **El aviso es fijo y no condicional.** Preguntar por fila si existe una validación sumaría una consulta por cada evidencia del listado.
+7. **Se cierra la dependencia de `Activity`** (Decisión 26, limitaciones): primero se eliminan las evidencias y luego la actividad, todo desde la web.
+
+**Justificación:**
+- **Subclases mínimas y no vistas nuevas.** Todas las capas (solo `POST`, permiso, scoping, borrado lógico, `ProtectedError` como mensaje) ya viven en `SoftDeleteView` y están probadas; repetirlas por entidad duplicaría lo que hay que mantener y probar.
+- **Aviso fijo.** Tener o no validación no cambia lo que hace el botón, solo lo que ocurre después; el aviso cuesta una frase y cero consultas, y evita una sorpresa a quien elimina.
+- **`Commitment` sin regla propia** por coherencia con el Admin: si la web fuera más estricta o más laxa que el Admin, la misma persona vería resultados distintos según por dónde entre.
+
+**Verificación:** 47 tests HTTP nuevos: 27 en `performance/tests_evidence_delete_web.py` y 20 en `performance/tests_commitment_delete_web.py`, con `Client(enforce_csrf_checks=True)` donde corresponde. Cubren, en ambas entidades: anónimo al login, sin permiso 403, registro de otra Delegación 404, superuser en cualquier Delegación, `GET` 405, sin token CSRF 403, el token que imprime la página es el que el servidor acepta, `deleted_at` marcado con la fila intacta, desaparece del listado, segundo envío 404, botón y scripts solo con permiso, y escapado del texto del diálogo. Propios de `Evidence`: cascada a la `Validation` (y que otras validaciones no se tocan), código con `/`, el archivo no se toca, la actividad se elimina desde la web tras sus evidencias, el aviso, y que el aviso no cuesta consultas por fila. Propios de `Commitment`: scoping por `Commitment.delegation` y no por responsable, el Verificador (sin permisos de compromisos) recibe 403, y el aviso de la validación no aparece.
+
+Se comprobó por mutación que cada capa nueva tiene un test que falla al quitarla: 21 mutaciones (permiso, scoping, `success_url`, mensaje, `<path:pk>`, guarda del botón y de los scripts en cada listado, aviso `extra`, consulta por fila, `force_escape`, cascada del modelo, scoping por responsable), todas detectadas. Una mutación (`force_escape`) sobrevivió a la primera versión del test, que pasaba `extra` por el contexto de Python, donde Django sí escapa solo; se reescribió con un literal de plantilla, que es el caso real de uso.
+
+Prueba por HTTP real (`seed_sgr` + `runserver` + `curl`), 52 comprobaciones con los 3 usuarios del seed más un usuario que no es superuser con permiso de eliminar en otra Delegación (el seed solo tiene un eliminador y es superuser, así que sin él el 404 de scoping no se ve): sin errores 5xx; Funcionario y Verificador reciben 403 por permiso (se distinguió del 403 por CSRF mirando el cuerpo de la respuesta); una evidencia o compromiso de otra Delegación da 404; eliminar una evidencia con validación marca `deleted_at` en ambas; y la actividad se elimina después de sus evidencias. En la base ninguna fila se borró físicamente. El log del servidor solo tiene los `PermissionDenied` esperados.
+
+**Limitaciones conocidas (no resueltas a propósito):**
+- **El aviso se muestra aunque la evidencia no tenga validación** (efecto buscado del punto 6).
+- **El archivo de una evidencia eliminada queda en disco**: el borrado es lógico y la fila se puede restaurar. La limpieza de huérfanos es de la Fase 8.
+- **`Validation` todavía no se puede eliminar desde la web** (patch 15, opcional). Hasta entonces una validación solo se elimina junto con su evidencia o desde el Admin.
+- **No hay forma de restaurar desde la web ni el Admin** (Decisión 26).
+- **Sin JavaScript no se puede eliminar** (Decisión 26 punto 6), y el diálogo **sigue sin probarse en un navegador real** (paso 7.1): queda como prueba manual pendiente (entrar como `admin_sgr`, pulsar "Eliminar" y comprobar que "Cancelar" no elimina y "Sí, eliminar" sí).
+
+**Alternativas descartadas:** aviso condicional según exista o no la validación (una consulta por fila); `<str:pk>` en la ruta de `Evidence`; una vista de eliminación completa por entidad en vez de subclasear `SoftDeleteView`; regla propia de rol para `Commitment` (el Admin tampoco la tiene).

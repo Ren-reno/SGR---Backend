@@ -44,6 +44,11 @@
               {% if perms.performance.change_evidence %}
                 <a href="{% url 'performance:evidence_update' evidence.pk %}">Editar</a>
               {% endif %}
+              {% if perms.performance.delete_evidence %}
+                {% url 'performance:evidence_delete' evidence.pk as delete_url %}
+                {# Aviso fijo y no condicional: preguntar por fila si hay validación sumaría una consulta por cada evidencia del listado (Decisión 28). #}
+                {% include "performance/partials/delete_button.html" with url=delete_url title="¿Eliminar esta evidencia?" detail=evidence extra="Si tiene una validación, también se eliminará." %}
+              {% endif %}
             </td>
           </tr>
         {% empty %}
@@ -54,4 +59,9 @@
   </div>
 
   {% include "performance/partials/pagination.html" %}
+{% endblock %}
+{% block extra_js %}
+  {% if perms.performance.delete_evidence %}
+    {% include "performance/partials/delete_scripts.html" %}
+  {% endif %}
 {% endblock %}

@@ -17,10 +17,12 @@ urlpatterns = [
     # incluido, y con `str` un solo código así haría fallar el listado entero
     # (NoReverseMatch al armar el enlace "Editar").
     path('evidences/<path:pk>/edit/', evidence.EvidenceUpdateView.as_view(), name='evidence_update'),
+    path('evidences/<path:pk>/delete/', evidence.EvidenceDeleteView.as_view(), name='evidence_delete'),
     path('validations/', validation.ValidationListView.as_view(), name='validation_list'),
     path('validations/new/', validation.ValidationCreateView.as_view(), name='validation_create'),
     path('validations/<int:pk>/edit/', validation.ValidationUpdateView.as_view(), name='validation_update'),
     path('commitments/', commitment.CommitmentListView.as_view(), name='commitment_list'),
     path('commitments/new/', commitment.CommitmentCreateView.as_view(), name='commitment_create'),
     path('commitments/<int:pk>/edit/', commitment.CommitmentUpdateView.as_view(), name='commitment_update'),
+    path('commitments/<int:pk>/delete/', commitment.CommitmentDeleteView.as_view(), name='commitment_delete'),
 ]
