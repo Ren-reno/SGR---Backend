@@ -37,6 +37,11 @@
               {% if perms.performance.change_validation and can_review %}
                 <a href="{% url 'performance:validation_update' validation.pk %}">Editar</a>
               {% endif %}
+              {% if perms.performance.delete_validation and can_review %}
+                {% url 'performance:validation_delete' validation.pk as delete_url %}
+                {# Aviso fijo: la evidencia queda sin validación y no puede volver a validarse desde la web (Decisión 29). #}
+                {% include "performance/partials/delete_button.html" with url=delete_url title="¿Eliminar esta validación?" detail=validation extra="La evidencia quedará sin validación y no podrá volver a validarse desde la web." %}
+              {% endif %}
             </td>
           </tr>
         {% empty %}
@@ -47,4 +52,9 @@
   </div>
 
   {% include "performance/partials/pagination.html" %}
+{% endblock %}
+{% block extra_js %}
+  {% if perms.performance.delete_validation and can_review %}
+    {% include "performance/partials/delete_scripts.html" %}
+  {% endif %}
 {% endblock %}

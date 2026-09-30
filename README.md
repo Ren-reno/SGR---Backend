@@ -190,9 +190,10 @@ Tercer CRUD sobre la misma base. Requiere sesión iniciada (sin ella redirige al
 | `/validations/` | Listado paginado (5 / 15 / 30) de las validaciones de tu Delegación | `view_validation` |
 | `/validations/new/` | Alta | `add_validation` **y** ser Verificador o Administrador |
 | `/validations/<id>/edit/` | Edición (una validación de otra Delegación responde 404) | `change_validation` **y** ser Verificador o Administrador |
+| `/validations/<id>/delete/` | Eliminación lógica: solo `POST`, con confirmación SweetAlert2 (ver *Eliminación*) | `delete_validation` **y** ser Verificador o Administrador |
 
 Igual que en el Admin: **Administrador** hace todo; **Verificador** ve, crea y edita las de su
-Delegación; **Funcionario** y **Delegado** no acceden. Reglas que valida el servidor:
+Delegación (no elimina); **Funcionario** y **Delegado** no acceden. Reglas que valida el servidor:
 
 - La decisión es `Aprobada`, `Rechazada` o `Corrección solicitada`; el resultado se deriva de ella.
 - La observación es obligatoria al rechazar o pedir corrección.
@@ -201,9 +202,8 @@ Delegación; **Funcionario** y **Delegado** no acceden. Reglas que valida el ser
 - Al editar, la evidencia no se puede cambiar.
 
 Crear o editar una validación **no** cambia el estado de revisión de la evidencia (solo lo hace la
-acción "aprobar evidencias en lote" del Admin). La eliminación de validaciones desde la web llega
-en el patch 15 (opcional); mientras tanto una validación solo se elimina junto con su evidencia o desde el
-Admin. Ver Decisión 24 en `docs/decisiones.md`, incluidos los supuestos por confirmar.
+acción "aprobar evidencias en lote" del Admin). La eliminación se describe en la sección
+*Eliminación* (Decisión 29). Ver Decisión 24 en `docs/decisiones.md`, incluidos los supuestos por confirmar.
 
 ### Compromisos (paso 6.4)
 
@@ -225,10 +225,11 @@ con el mismo responsable, fecha, origen, solicitante y territorio. La eliminaci�
 *Eliminación* (Decisión 28). Ver Decisión 25 en `docs/decisiones.md`, que también lista los supuestos sin
 confirmar (uno de ellos, sobre la zona horaria, quedó resuelto en la Decisión 27).
 
-### Eliminación (Fase 7, patches 12 y 14)
+### Eliminación (Fase 7, patches 12, 14 y 15)
 
-Cada fila del listado de Actividades, Evidencias y Compromisos muestra un botón **Eliminar** solo a
-quien tiene el permiso `delete_<modelo>` (hoy solo el grupo **Administrador**). Al pulsarlo aparece una confirmación de **SweetAlert2**; solo si
+Cada fila del listado de Actividades, Evidencias, Validaciones y Compromisos muestra un botón **Eliminar** solo a
+quien tiene el permiso `delete_<modelo>` (hoy solo el grupo **Administrador**); en Validaciones se exige además
+ser Verificador o Administrador, igual que en el Admin. Al pulsarlo aparece una confirmación de **SweetAlert2**; solo si
 se confirma se envía un formulario `POST` con token CSRF.
 
 - **La confirmación no es la seguridad.** El servidor vuelve a verificar todo en cada `POST`: sin sesión
@@ -241,15 +242,21 @@ se confirma se envía un formulario `POST` con token CSRF.
 - **Al eliminar una evidencia también se elimina su validación**, si la tiene. El diálogo lo avisa siempre
   ("Si tiene una validación, también se eliminará."), tenga o no validación, para no consultarlo fila por
   fila en el listado. Un compromiso no tiene efectos en cascada.
+- **Eliminar una validación es de sentido único desde la web.** La evidencia queda sin validación y **no puede
+  volver a validarse desde la web**: `/validations/new/` no la ofrece, porque una evidencia solo admite una
+  validación y la fila eliminada sigue ocupando ese lugar. El diálogo lo avisa. Solo se revierte restaurando la
+  fila desde la consola (`restore()`). Eliminar una validación no cambia el estado de revisión de la evidencia
+  ni la elimina. Un usuario con `delete_validation` pero sin rol de Verificador o Administrador recibe 403, y una
+  validación cuya evidencia es de otra Delegación responde 404 (el alcance lo da la evidencia, no el verificador).
 - **Sin CDN:** SweetAlert2 v11.26.25 (MIT) viaja dentro del repositorio, en
   `performance/static/performance/vendor/sweetalert2/`, junto con su licencia. Sin JavaScript el botón no
   elimina nada.
-- **Estado por entidad:** `Activity` (patch 12), `Evidence` y `Commitment` (patch 14) listos.
-  `Validation` llega en el patch 15 (opcional).
+- **Estado por entidad:** las 4 entidades tienen eliminación web: `Activity` (patch 12), `Evidence` y
+  `Commitment` (patch 14) y `Validation` (patch 15).
 - **Estáticos y despliegue:** es el primer archivo estático del proyecto. Con `DEBUG=True`, `runserver` lo
   sirve; para el despliegue hará falta `STATIC_ROOT` y `collectstatic` (pendiente de la Fase 9).
 
-Ver Decisiones 26 y 28 en `docs/decisiones.md`; la 26 también registra el borrado lógico de la Fase 3 y
+Ver Decisiones 26, 28 y 29 en `docs/decisiones.md`; la 26 también registra el borrado lógico de la Fase 3 y
 reemplaza las Decisiones 12 y 18 en lo que decían sobre no poder borrar `Validation` ni `Commitment`.
 
 ## Cuentas de prueba

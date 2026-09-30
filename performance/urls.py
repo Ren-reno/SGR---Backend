@@ -21,6 +21,7 @@ urlpatterns = [
     path('validations/', validation.ValidationListView.as_view(), name='validation_list'),
     path('validations/new/', validation.ValidationCreateView.as_view(), name='validation_create'),
     path('validations/<int:pk>/edit/', validation.ValidationUpdateView.as_view(), name='validation_update'),
+    path('validations/<int:pk>/delete/', validation.ValidationDeleteView.as_view(), name='validation_delete'),
     path('commitments/', commitment.CommitmentListView.as_view(), name='commitment_list'),
     path('commitments/new/', commitment.CommitmentCreateView.as_view(), name='commitment_create'),
     path('commitments/<int:pk>/edit/', commitment.CommitmentUpdateView.as_view(), name='commitment_update'),
