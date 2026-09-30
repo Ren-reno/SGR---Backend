@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% comment %}
+Portada (patch 13, Decisión 27). Un enlace por listado, cada uno condicionado
+a su permiso `view_*`. El mensaje de estado vacío repite las mismas cuatro
+condiciones: al agregar un módulo nuevo hay que sumarlo también ahí.
+{% endcomment %}
+{% block title %}Inicio{% endblock %}
+{% block content %}
+  <h1>Inicio</h1>
+
+  {% if perms.performance.view_activity or perms.performance.view_evidence or perms.performance.view_validation or perms.performance.view_commitment %}
+    <p class="help">Elige con qué módulo quieres trabajar.</p>
+    <ul class="module-list">
+      {% if perms.performance.view_activity %}
+        <li><a href="{% url 'performance:activity_list' %}"><strong>Actividades</strong><span>Atenciones registradas por los funcionarios.</span></a></li>
+      {% endif %}
+      {% if perms.performance.view_evidence %}
+        <li><a href="{% url 'performance:evidence_list' %}"><strong>Evidencias</strong><span>Archivos que respaldan cada actividad.</span></a></li>
+      {% endif %}
+      {% if perms.performance.view_validation %}
+        <li><a href="{% url 'performance:validation_list' %}"><strong>Validaciones</strong><span>Revisión de las evidencias.</span></a></li>
+      {% endif %}
+      {% if perms.performance.view_commitment %}
+        <li><a href="{% url 'performance:commitment_list' %}"><strong>Compromisos</strong><span>Compromisos con la comunidad y su estado.</span></a></li>
+      {% endif %}
+    </ul>
+  {% else %}
+    <div class="card">
+      <p>Tu cuenta todavía no tiene acceso a ningún módulo.</p>
+      <p class="help">Pide a un administrador que te asigne los permisos que necesitas.</p>
+    </div>
+  {% endif %}
+
+  {% if user.is_staff %}
+    <p class="links"><a href="{% url 'admin:index' %}">Ir a la administración de Django (Admin)</a></p>
+  {% endif %}
+{% endblock %}

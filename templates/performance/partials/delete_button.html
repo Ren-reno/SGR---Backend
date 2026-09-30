@@ -1,0 +1,32 @@
+{% comment %}
+Botón "Eliminar" con confirmación SweetAlert2 (Fase 7, Decisión 26).
+Uso, dentro de la celda de acciones de un listado y solo si la persona tiene
+el permiso `delete_<modelo>`:
+
+  {% url 'performance:activity_delete' activity.pk as delete_url %}
+  {% include "performance/partials/delete_button.html" with url=delete_url title="¿Eliminar esta actividad?" detail=activity %}
+
+- Es un formulario POST con token CSRF; el botón es type="button" y lo envía
+  performance/js/confirm-delete.js solo tras confirmar (sin JavaScript no
+  elimina nada).
+- `title` y `detail` viajan en atributos data-*: Django los escapa aquí y el
+  script los muestra como texto plano, nunca como HTML.
+- `extra` (opcional) agrega una frase al final del texto del diálogo, para
+  avisar de un efecto que la persona no ve en la fila (por ejemplo, que al
+  eliminar una evidencia también se elimina su validación):
+
+    {% include "performance/partials/delete_button.html" with url=delete_url title="..." detail=evidence extra="Si tiene una validación, también se eliminará." %}
+
+  Es texto fijo escrito en la plantilla, no una consulta por fila. Se escapa
+  igual que `detail` (`force_escape`) aunque sea un literal, porque Django
+  no escapa los literales de plantilla y una comilla en `extra` cerraría el
+  atributo.
+- Requiere {% include "performance/partials/delete_scripts.html" %} en el
+  bloque extra_js de la página.
+{% endcomment %}
+<form method="post" action="{{ url }}" class="inline-post">
+  {% csrf_token %}
+  <button type="button" class="link danger js-confirm-delete"
+          data-title="{{ title }}"
+          data-text="Se eliminará «{{ detail }}». El registro dejará de mostrarse en el sistema.{% if extra %} {{ extra|force_escape }}{% endif %}">Eliminar</button>
+</form>

@@ -1,0 +1,54 @@
+{% comment %}
+Partial de paginación (Fase 6, paso 6.5), compartido por las 4 vistas de
+listado del CRUD web. Espera en contexto, todo puesto por
+`SessionPaginationMixin.get_context_data()`:
+  - page_obj            (lo agrega ListView automáticamente)
+  - allowed_per_page     ((5, 15, 30))
+  - current_per_page
+  - elided_page_range    lista ya resuelta en Python -- el template NO
+                         invoca `get_elided_page_range()` acá, porque es un
+                         método con argumentos y el lenguaje de templates
+                         de Django no permite llamarlo con paréntesis.
+
+`{% querystring %}` (Django 5.1+) conserva cualquier otro parámetro que la
+URL ya traiga (por ejemplo un filtro de 6.2/6.3) y solo reemplaza `page` o
+`per_page`; por eso ningún enlace de acá pisa un filtro que la vista
+concreta haya agregado.
+{% endcomment %}
+{% if page_obj %}
+<nav class="pagination" aria-label="Paginación">
+  <div class="per-page" aria-label="Registros por página">
+    Ver:
+    {% for size in allowed_per_page %}
+      {% if size == current_per_page %}
+        <a class="active" href="{% querystring per_page=size page=None %}" aria-current="true">{{ size }}</a>
+      {% else %}
+        <a href="{% querystring per_page=size page=None %}">{{ size }}</a>
+      {% endif %}
+    {% endfor %}
+    <span>por página · {{ page_obj.paginator.count }} en total</span>
+  </div>
+
+  {% if page_obj.has_other_pages %}
+    <div class="pages">
+      {% if page_obj.has_previous %}
+        <a href="{% querystring page=page_obj.previous_page_number %}" aria-label="Página anterior">‹</a>
+      {% endif %}
+
+      {% for num in elided_page_range %}
+        {% if num == page_obj.paginator.ELLIPSIS %}
+          <span class="ellipsis">{{ num }}</span>
+        {% elif num == page_obj.number %}
+          <span class="current" aria-current="true">{{ num }}</span>
+        {% else %}
+          <a href="{% querystring page=num %}">{{ num }}</a>
+        {% endif %}
+      {% endfor %}
+
+      {% if page_obj.has_next %}
+        <a href="{% querystring page=page_obj.next_page_number %}" aria-label="Página siguiente">›</a>
+      {% endif %}
+    </div>
+  {% endif %}
+</nav>
+{% endif %}

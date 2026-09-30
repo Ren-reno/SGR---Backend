@@ -1,0 +1,185 @@
+"""Scoping por Delegación para las vistas web del CRUD (Fase 6, paso 6.0 /
+Fase 5 del plan formativo).
+
+El scoping por Delegación ya existe y funciona dentro del Admin desde la
+Decisión 6 (`performance/admin.py`, `get_queryset()` de cada ModelAdmin).
+Esta Fase 5/6 lo EXTIENDE a las vistas web nuevas -- se reutiliza la misma
+regla de negocio, no se rediseña: un Administrador (superuser o miembro del
+grupo `Administrador`, ver `is_unrestricted`) ve todo; cualquier otro
+usuario ve solo los registros de su propia Delegación, encontrada siguiendo
+la cadena de FKs hasta `Employee.delegation`.
+
+Por qué un mixin y no repetir el filtro en cada vista: las 4 entidades del
+CRUD web (Activity, Evidence, Validation, Commitment) llegan a
+`Employee.delegation` por caminos de distinto largo -- Commitment tiene FK
+directa a Delegation (Decisión 16); Activity pasa por 1 salto
+(`employee__delegation`); Evidence por 2 (`activity__employee__delegation`);
+Validation por 3 (`evidence__activity__employee__delegation`). Ese único
+dato que cambia por entidad es `delegation_lookup`; toda la lógica de
+"quién ve qué" vive acá una sola vez.
+"""
+
+from organization.models import Employee
+
+# Grupo cuyos miembros no tienen restricción de Delegación (Decisión 6), aunque
+# no sean superuser técnico de Django.
+UNRESTRICTED_GROUP = 'Administrador'
+
+
+def is_unrestricted(user):
+    """True si `user` es Administrador en cualquiera de sus dos formas
+    (superuser técnico de Django, o miembro del grupo `Administrador`) y por
+    lo tanto no se le aplica el scoping por Delegación.
+
+    Es la única definición de "sin restricción de Delegación" (Decisión 31):
+    la usan el scoping de las vistas web (este módulo) y el Admin
+    (`_unrestricted` en `admin.py`), para que web y Admin no puedan volver a
+    divergir. No mira `Employee`: un Administrador sin fila `Employee` sigue
+    sin restricción, igual que en el Admin (Decisión 6).
+
+    Un anónimo no está sin restricción. Solo decide el alcance de Delegación:
+    los permisos de modelo y el rol de revisor son otra pregunta y se siguen
+    comprobando aparte, en cada vista.
+    """
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return user.groups.filter(name=UNRESTRICTED_GROUP).exists()
+
+
+def scope_queryset_for_user(queryset, user, delegation_lookup):
+    """Acota `queryset` a lo que `user` puede ver, según su Delegación.
+
+    Es la única definición de la regla (un Administrador, ver
+    `is_unrestricted`, ve todo; cualquier otro, solo su Delegación; anónimo o
+    sin `Employee`, nada). La usan el mixin de
+    las vistas y los `ModelForm` (para acotar los desplegables de FK: sin
+    eso, quien puede editar un registro podría reasignarlo a una
+    Delegación ajena cambiando el valor en el POST).
+
+    `delegation_lookup` es el mismo prefijo del mixin: `""` para
+    Employee/Commitment, `"employee__"` para Activity, etc.
+    """
+    if not user.is_authenticated:
+        return queryset.none()
+    if is_unrestricted(user):
+        return queryset
+    try:
+        employee = user.employee
+    except Employee.DoesNotExist:
+        return queryset.none()
+    return queryset.filter(
+        **{f'{delegation_lookup}delegation_id': employee.delegation_id}
+    )
+
+
+def scope_delegations_for_user(queryset, user):
+    """La misma regla de `scope_queryset_for_user`, aplicada al propio modelo
+    `Delegation` (paso 6.4).
+
+    Existe aparte porque `scope_queryset_for_user` filtra por
+    `<lookup>delegation_id` y `Delegation` no tiene ese campo (su clave es
+    `id`), así que no sirve para el desplegable `Commitment.delegation`. Es
+    lo que hace `CommitmentAdmin.formfield_for_foreignkey`: un Administrador
+    (ver `is_unrestricted`) ve todas; cualquier otro, solo la de su
+    `Employee`; anónimo o sin `Employee`, ninguna.
+    """
+    if not user.is_authenticated:
+        return queryset.none()
+    if is_unrestricted(user):
+        return queryset
+    try:
+        employee = user.employee
+    except Employee.DoesNotExist:
+        return queryset.none()
+    return queryset.filter(pk=employee.delegation_id)
+
+
+class DelegationScopedQuerysetMixin:
+    """Mixin para `ListView`/`UpdateView`/`DeleteView` basadas en clase.
+
+    Uso: la subclase define `model` (como siempre) y `delegation_lookup`,
+    la ruta de campos desde `model` hasta `Delegation`, en sintaxis de
+    `filter()` de Django, SIN el sufijo `_id` final (el mixin se lo agrega).
+    Cadena vacía `""` para un modelo con FK directa a Delegation.
+
+        class CommitmentListView(DelegationScopedQuerysetMixin, ListView):
+            model = Commitment
+            delegation_lookup = ""          # Commitment.delegation
+
+        class ActivityListView(DelegationScopedQuerysetMixin, ListView):
+            model = Activity
+            delegation_lookup = "employee__"
+
+        class EvidenceListView(DelegationScopedQuerysetMixin, ListView):
+            model = Evidence
+            delegation_lookup = "activity__employee__"
+
+        class ValidationListView(DelegationScopedQuerysetMixin, ListView):
+            model = Validation
+            delegation_lookup = "evidence__activity__employee__"
+
+    Reglas, en el orden en que se aplican:
+    1. Administrador (superuser o grupo `Administrador`, `is_unrestricted`):
+       sin filtrar -- ve todas las Delegaciones, igual que `_unrestricted()`
+       en admin.py, que usa la misma función (Decisiones 6 y 31).
+    2. Usuario autenticado SIN `Employee` asociado (p. ej. una cuenta de
+       staff creada a mano, sin pasar por el seed): `.none()`, nunca la
+       tabla completa. Sin este caso, un `OneToOneField` inexistente
+       (`user.employee`) lanzaría `Employee.DoesNotExist` y tumbaría la
+       vista con un 500 en vez de mostrar "sin resultados".
+    3. Cualquier otro caso: filtrado por la Delegación de su Employee.
+
+    Este mixin SOLO acota el queryset por Delegación -- no reemplaza los
+    chequeos de autenticación (`LoginRequiredMixin`, aparte) ni los de
+    permiso por acción (que van en cada vista concreta de creación/edición/
+    eliminación, no acá: qué puede *ver* alguien de su Delegación es una
+    pregunta distinta de qué puede *hacer* con eso).
+    """
+
+    delegation_lookup = None  # cada subclase concreta lo define
+
+    def get_delegation_field(self):
+        """`"employee__delegation_id"`, `"activity__employee__delegation_id"`,
+        etc., a partir de `delegation_lookup`. Falla explícito si una
+        subclase se olvidó de definirlo -- mejor un AttributeError claro en
+        desarrollo que un filtro silenciosamente vacío en producción."""
+        if self.delegation_lookup is None:
+            raise NotImplementedError(
+                f'{self.__class__.__name__} debe definir '
+                f'"delegation_lookup" (ver docstring de '
+                f'DelegationScopedQuerysetMixin).'
+            )
+        return f'{self.delegation_lookup}delegation_id'
+
+    def get_scoped_queryset(self):
+        """Queryset base ya acotado por Delegación. Las subclases llaman a
+        este método (no a `Model.objects.all()`) desde `get_queryset()`,
+        para heredar filtros de estado (p. ej. excluir soft-deleted, cuando
+        la Fase 3 lo agregue) sin que el scoping los pise ni viceversa."""
+        # get_delegation_field() lanza NotImplementedError si la subclase
+        # olvidó `delegation_lookup`; se llama antes de filtrar.
+        self.get_delegation_field()
+        return scope_queryset_for_user(
+            self.model._default_manager.all(),
+            self.request.user,
+            self.delegation_lookup,
+        )
+
+    def get_queryset(self):
+        qs = self.get_scoped_queryset()
+        # `get_queryset()` reemplaza por completo al de Django (no llama a
+        # `super().get_queryset()`), así que el `ordering` de la vista NO
+        # se aplicaría solo por declararlo -- `ListView.get_queryset()`
+        # original es quien normalmente lee `self.ordering` vía
+        # `get_ordering()`; acá se reproduce ese mismo paso explícitamente
+        # para no perderlo. Sin esto, paginar sin orden explícito dispara
+        # `UnorderedObjectListWarning` y el orden entre páginas queda
+        # indeterminado.
+        ordering = getattr(self, 'get_ordering', lambda: None)()
+        if ordering:
+            if isinstance(ordering, str):
+                ordering = (ordering,)
+            qs = qs.order_by(*ordering)
+        return qs

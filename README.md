@@ -75,14 +75,21 @@ Rutas disponibles:
 
 | Ruta | Qué es |
 |---|---|
+| `/` | Portada: un enlace a cada listado según tus permisos (requiere sesión; sin ella redirige al login) |
 | `/accounts/login/` | Inicio de sesión |
 | `/accounts/logout/` | Cierre de sesión (solo `POST`; se dispara con el botón "Cerrar sesión") |
 | `/accounts/forgot-password/` | Recuperación de contraseña, paso 1: generar el código |
 | `/accounts/reset-password/` | Recuperación de contraseña, paso 2: código + contraseña nueva |
 | `/admin/` | Django Admin |
 
-Tras iniciar sesión se llega al Admin. `http://127.0.0.1:8000/` sin más da 404 por diseño: todavía
-no hay una página de inicio propia (llega con el CRUD web de la Fase 6).
+Tras iniciar sesión se llega a la **portada** (`/`), igual para todos los roles. Muestra un enlace a
+cada listado (Actividades, Evidencias, Validaciones, Compromisos) solo si tu cuenta tiene el permiso
+de **ver** esa entidad, y un enlace al Admin solo si eres *staff*. Si tu cuenta no tiene acceso a
+ningún módulo (hoy, el grupo Delegado), la portada lo avisa en vez de quedar en blanco. El logo del
+encabezado vuelve a la portada desde cualquier pantalla. Ver Decisión 27 en `docs/decisiones.md`.
+
+La zona horaria del proyecto es `America/Santiago` (`TIME_ZONE`): "hoy", en las reglas de fecha de
+los formularios, es la fecha de Chile y no la de UTC.
 
 ## Recuperación de contraseña
 
@@ -110,6 +117,158 @@ carácter especial**. Se guarda hasheada (PBKDF2 de Django), nunca en texto plan
 ```powershell
 python manage.py test
 ```
+
+## CRUD web (en construcción)
+
+Este patch entrega la **base común** del CRUD web de las 4 entidades operativas
+(`Activity`, `Evidence`, `Validation`, `Commitment`): todavía no hay ninguna vista de
+negocio, solo las dos piezas que reutilizarán las 4 vistas de listado cuando se agreguen:
+
+- **`performance/scoping.py` — `DelegationScopedQuerysetMixin`.** Extiende a las vistas
+  web el mismo scoping por Delegación que ya funciona en el Admin (un Administrador, sea
+  superuser o del grupo `Administrador`, ve todo; cualquier otro usuario, solo lo de su propia
+  Delegación). La regla es `is_unrestricted(user)`, compartida con el Admin (Decisión 31).
+- **`performance/pagination.py` — `SessionPaginationMixin`.** Paginación con `Paginator`,
+  tamaño elegible entre **5 / 15 / 30**, recordado en `request.session`. Un valor fuera de
+  ese conjunto se ignora (normaliza), no se rechaza con error.
+- **`templates/performance/partials/pagination.html`** y **`templates/base.html`**
+  extendido con las clases de tabla/paginación que usarán las 4 vistas.
+
+Ver Decisión 21 en `docs/decisiones.md` para el detalle completo, incluidos dos errores
+reales que aparecieron al probarlo por HTTP y quedaron corregidos con test de regresión.
+
+### Actividades (paso 6.1)
+
+Primer CRUD de negocio sobre esa base. Requiere sesión iniciada (sin ella redirige al login):
+
+| URL | Qué hace | Permiso de Django |
+|---|---|---|
+| `/activities/` | Listado paginado (5 / 15 / 30) de las actividades de tu Delegación | `view_activity` |
+| `/activities/new/` | Alta | `add_activity` |
+| `/activities/<id>/edit/` | Edición (una actividad de otra Delegación responde 404) | `change_activity` |
+| `/activities/<id>/delete/` | Eliminación lógica: solo `POST`, con confirmación SweetAlert2 (ver abajo) | `delete_activity` |
+
+Son los mismos permisos que ya asigna `seed_sgr` a cada grupo: **Administrador** hace todo;
+**Funcionario** y **Verificador** ven y editan, pero no crean ni eliminan; **Delegado** aún no tiene ninguno.
+
+El listado se abre desde la portada (`/`), que lo enlaza a quien tiene `view_activity`, o entrando
+directo a `/activities/`. Ver Decisiones 22 y 27 en `docs/decisiones.md`.
+
+### Evidencias (paso 6.2)
+
+Mismo patrón que Actividades, sobre `Evidence`:
+
+| URL | Qué hace | Permiso de Django |
+|---|---|---|
+| `/evidences/` | Listado paginado (5 / 15 / 30) de las evidencias de tu Delegación, con enlace al archivo | `view_evidence` |
+| `/evidences/new/` | Alta con archivo (formulario `multipart/form-data`) | `add_evidence` |
+| `/evidences/<código>/edit/` | Edición (una evidencia de otra Delegación responde 404) | `change_evidence` |
+| `/evidences/<código>/delete/` | Eliminación lógica: solo `POST`, con confirmación SweetAlert2 (ver *Eliminación*) | `delete_evidence` |
+
+Con lo que asigna `seed_sgr`: **Administrador** hace todo; **Funcionario** y **Verificador** ven y
+editan, pero no crean ni eliminan (crear y eliminar evidencias hoy es solo del Administrador); **Delegado**
+no tiene ninguno.
+
+Tres particularidades de `Evidence` que conviene conocer antes de la demo:
+
+- **El código lo genera el sistema y no se puede cambiar** (RF-011, RN-010): al crear no se escribe,
+  se asigna al guardar con el formato `EVID-0001`, `EVID-0002`... (el siguiente número libre; una
+  evidencia eliminada conserva el suyo y no se reutiliza). Al editar se muestra como dato, y un código
+  que llegue por POST se ignora, en la web y en el Admin. Es la clave primaria (Decisión 33).
+- **El estado de revisión no se edita aquí.** Lo fija el flujo de validación; si el formulario lo
+  permitiera, quien carga una evidencia podría marcarla "Aprobada" (RN-009). Es un conjunto cerrado
+  de tres valores (Pendiente, Aprobada, Rechazada; Decisión 30) y en el Admin se elige de un desplegable.
+- **El archivo se exige al crear**; al editar, si no se sube otro se conserva el actual. La
+  validación de tamaño, extensión y contenido real del archivo llega en la Fase 8.
+
+La fecha de la evidencia no puede ser futura ni anterior a la de su actividad. Ver Decisión 23 en
+`docs/decisiones.md`.
+
+### Validaciones (paso 6.3)
+
+Tercer CRUD sobre la misma base. Requiere sesión iniciada (sin ella redirige al login):
+
+| URL | Qué hace | Requiere |
+|---|---|---|
+| `/validations/` | Listado paginado (5 / 15 / 30) de las validaciones de tu Delegación | `view_validation` |
+| `/validations/new/` | Alta | `add_validation` **y** ser Verificador o Administrador |
+| `/validations/<id>/edit/` | Edición (una validación de otra Delegación responde 404) | `change_validation` **y** ser Verificador o Administrador |
+| `/validations/<id>/delete/` | Eliminación lógica: solo `POST`, con confirmación SweetAlert2 (ver *Eliminación*) | `delete_validation` **y** ser Verificador o Administrador |
+
+Igual que en el Admin: **Administrador** hace todo; **Verificador** ve, crea y edita las de su
+Delegación (no elimina); **Funcionario** y **Delegado** no acceden. Reglas que valida el servidor:
+
+- La decisión es `Aprobada`, `Rechazada` o `Corrección solicitada`; el resultado se deriva de ella.
+- La observación es obligatoria al rechazar o pedir corrección.
+- La fecha no puede ser futura ni anterior a la de la evidencia.
+- Una evidencia solo puede tener una validación (no se ofrecen las ya validadas) y debe tener archivo.
+- Al editar, la evidencia no se puede cambiar.
+
+Crear o editar una validación **no** cambia el estado de revisión de la evidencia (solo lo hace la
+acción "aprobar evidencias en lote" del Admin). La eliminación se describe en la sección
+*Eliminación* (Decisión 29). Ver Decisión 24 en `docs/decisiones.md`, incluidos los supuestos por confirmar.
+
+### Compromisos (paso 6.4)
+
+Mismo patrón que Actividades. Requiere sesión iniciada (sin ella redirige al login):
+
+| URL | Qué hace | Permiso de Django |
+|---|---|---|
+| `/commitments/` | Listado paginado (5 / 15 / 30) de los compromisos de tu Delegación | `view_commitment` |
+| `/commitments/new/` | Alta | `add_commitment` |
+| `/commitments/<id>/edit/` | Edición (un compromiso de otra Delegación responde 404) | `change_commitment` |
+| `/commitments/<id>/delete/` | Eliminación lógica: solo `POST`, con confirmación SweetAlert2 (ver *Eliminación*) | `delete_commitment` |
+
+Permisos según `seed_sgr` (Decisión 18): **Administrador** y **Funcionario** ven, crean y editan
+(el Funcionario, solo de su Delegación) y solo el Administrador elimina; **Verificador** y **Delegado** reciben 403. Los
+desplegables *Delegación* y *Responsable* solo ofrecen la Delegación propia y sus empleados; la
+Delegación del responsable debe coincidir con la elegida. Además se valida que la fecha
+comprometida no sea anterior a hoy (al registrar o al cambiarla) y que no exista otro compromiso
+con el mismo responsable, fecha, origen, solicitante y territorio. La eliminación se describe en la sección
+*Eliminación* (Decisión 28). Ver Decisión 25 en `docs/decisiones.md`, que también lista los supuestos sin
+confirmar (uno de ellos, sobre la zona horaria, quedó resuelto en la Decisión 27).
+
+**Registros inactivos.** Los desplegables *Delegación* y *Responsable* ofrecen solo registros activos
+(`is_active`). Al editar se conserva el valor que el compromiso ya tenía aunque hoy esté inactivo, para
+que un compromiso antiguo siga pudiéndose guardar. Si la Delegación de tu cuenta está inactiva no queda
+ninguna para elegir: no puedes registrar compromisos nuevos, pero sí editar los existentes. El Admin no
+aplica este filtro. Siguen como limitaciones conocidas que el responsable se puede reasignar dentro de la
+propia Delegación (HU-15 queda fuera de alcance) y que el chequeo de duplicados en SQLite solo ignora
+mayúsculas en ASCII (`PÉREZ` no coincide con `Pérez`). Ver Decisión 32 en `docs/decisiones.md`.
+
+### Eliminación (Fase 7, patches 12, 14 y 15)
+
+Cada fila del listado de Actividades, Evidencias, Validaciones y Compromisos muestra un botón **Eliminar** solo a
+quien tiene el permiso `delete_<modelo>` (hoy solo el grupo **Administrador**); en Validaciones se exige además
+ser Verificador o Administrador, igual que en el Admin. Al pulsarlo aparece una confirmación de **SweetAlert2**; solo si
+se confirma se envía un formulario `POST` con token CSRF.
+
+- **La confirmación no es la seguridad.** El servidor vuelve a verificar todo en cada `POST`: sin sesión
+  redirige al login, sin permiso responde 403, un registro de otra Delegación responde 404, sin token
+  CSRF 403 y un `GET` a la URL de eliminar 405.
+- **Borrado lógico:** el registro no se borra, se marca `deleted_at` y deja de aparecer en el sistema
+  (`performance/soft_delete.py`). Una actividad con evidencias vivas no se puede eliminar: se muestra un
+  mensaje pidiendo eliminar primero sus evidencias, que ahora se eliminan desde `/evidences/`; el orden
+  completo (evidencias y luego actividad) se hace desde la web.
+- **Al eliminar una evidencia también se elimina su validación**, si la tiene. El diálogo lo avisa siempre
+  ("Si tiene una validación, también se eliminará."), tenga o no validación, para no consultarlo fila por
+  fila en el listado. Un compromiso no tiene efectos en cascada.
+- **Eliminar una validación es de sentido único desde la web.** La evidencia queda sin validación y **no puede
+  volver a validarse desde la web**: `/validations/new/` no la ofrece, porque una evidencia solo admite una
+  validación y la fila eliminada sigue ocupando ese lugar. El diálogo lo avisa. Solo se revierte restaurando la
+  fila desde la consola (`restore()`). Eliminar una validación no cambia el estado de revisión de la evidencia
+  ni la elimina. Un usuario con `delete_validation` pero sin rol de Verificador o Administrador recibe 403, y una
+  validación cuya evidencia es de otra Delegación responde 404 (el alcance lo da la evidencia, no el verificador).
+- **Sin CDN:** SweetAlert2 v11.26.25 (MIT) viaja dentro del repositorio, en
+  `performance/static/performance/vendor/sweetalert2/`, junto con su licencia. Sin JavaScript el botón no
+  elimina nada.
+- **Estado por entidad:** las 4 entidades tienen eliminación web: `Activity` (patch 12), `Evidence` y
+  `Commitment` (patch 14) y `Validation` (patch 15).
+- **Estáticos y despliegue:** es el primer archivo estático del proyecto. Con `DEBUG=True`, `runserver` lo
+  sirve; para el despliegue hará falta `STATIC_ROOT` y `collectstatic` (pendiente de la Fase 9).
+
+Ver Decisiones 26, 28 y 29 en `docs/decisiones.md`; la 26 también registra el borrado lógico de la Fase 3 y
+reemplaza las Decisiones 12 y 18 en lo que decían sobre no poder borrar `Validation` ni `Commitment`.
 
 ## Cuentas de prueba
 

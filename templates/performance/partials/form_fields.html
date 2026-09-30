@@ -1,0 +1,20 @@
+{% comment %}
+Cuerpo de formulario compartido por las 4 entidades del CRUD (Fase 6).
+Uso: {% include "performance/partials/form_fields.html" %} dentro de un
+<form method="post"> que ya trae {% csrf_token %}. Recorre `form` y muestra
+etiqueta, control, ayuda y errores de cada campo, más los errores generales
+(los de `clean()` que no son de un campo, como el de duplicados).
+{% endcomment %}
+{% if form.non_field_errors %}
+  <ul class="errorlist">
+    {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+  </ul>
+{% endif %}
+{% for field in form %}
+  <div class="field">
+    <label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} *{% endif %}</label>
+    {{ field }}
+    {% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}
+    {{ field.errors }}
+  </div>
+{% endfor %}
