@@ -621,3 +621,30 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 - **`version`:** su significado no está confirmado (la Decisión 9 la menciona como historial), así que no es editable y no se incrementa al editar. Tal como está, todas las filas quedan en 1.
 - **`Evidence.review_status` puede quedar desfasado:** una evidencia con una validación `Rechazada` sigue como `Pendiente` (o `pendiente`: el modelo y el seed no coinciden en mayúsculas). Decidir si el formulario debe sincronizarlo, lo que cambiaría la Decisión 9-bis.
 - **Diferencia heredada de 6.0:** `scope_queryset_for_user` trata como "sin restricción" solo al superuser, mientras que el Admin (`_unrestricted`) incluye también al grupo Administrador. Un usuario del grupo Administrador que no sea superuser vería en la web solo su Delegación y en el Admin todo. No afecta al seed (`admin_sgr` es ambas cosas).
+
+### Decisión 25 — CRUD web de Commitment: listar, crear y editar (Fase 6, paso 6.4)
+
+**Origen:** paso 6.4 del plan aplicado a `Commitment`, la cuarta entidad del CRUD web (Evidence y Validation son 6.2 y 6.3, en paralelo; este patch sale de 6.1). Repite el patrón de la Decisión 22 sin rediseñarlo. La eliminación (SweetAlert2 + borrado lógico) va en el patch final.
+
+**Decisión:**
+1. **Piezas:** `performance/views/commitment.py` (listar, crear, editar), `CommitmentForm` al final de `performance/forms.py`, tres rutas en `performance/urls.py` (`/commitments/`, `/commitments/new/`, `/commitments/<id>/edit/`) y los templates `commitment_list.html` y `commitment_form.html`.
+2. **Permisos = los de modelo que ya usa el Admin** (Decisión 18): `view_`, `add_`, `change_commitment`. Con lo que asigna `seed_sgr`: Administrador y Funcionario ven, crean y editan; Verificador y Delegado reciben 403. A diferencia de Activity (donde solo el Administrador crea), aquí el Funcionario **sí** crea, porque la Guía le asigna registrar compromisos (HU-12).
+3. **Scoping por `Commitment.delegation`** (`delegation_lookup = ""`): la Delegación propia del compromiso, no la de su responsable actual, igual que `CommitmentAdmin` (Decisión 18). En el listado filtra filas; en la edición, un compromiso ajeno responde 404.
+4. **Dos desplegables acotados**, porque el scoping de la vista acota qué se ve y no qué se escribe. `responsible` usa `scope_queryset_for_user(..., "")`. `delegation` necesita una función nueva, `scope_delegations_for_user()` en `scoping.py`: `scope_queryset_for_user` filtra por `<lookup>delegation_id` y `Delegation` no tiene ese campo (su clave es `id`). Es la misma regla, escrita para ese modelo. Se mantienen ambos campos en el formulario, como en el Admin (`delegation` es la fuente de verdad, Decisión 17), y cuando el usuario solo puede elegir una Delegación queda preseleccionada. Hay tests de regresión y se comprobó por mutación que fallan si se quita cualquiera de los dos acotados.
+5. **Validaciones de servidor**, además del `clean()` del modelo que exige que el responsable pertenezca a la Delegación elegida (Decisión 17) y que `ModelForm` ejecuta solo:
+   - Requeridos: delegación, responsable, origen, solicitante, territorio y fecha (los espacios en blanco no cuentan). `status` solo admite los 4 valores de `choices`.
+   - Fecha comprometida no anterior a hoy (RF-016: "compromisos futuros"). Se exige al registrar y cuando la fecha cambia; un compromiso ya vencido sigue siendo editable sin tocar su fecha (p. ej. para pasarlo a "Realizado").
+   - Duplicado: mismo responsable, fecha, origen, solicitante y territorio, sin distinguir mayúsculas. Excluye la propia fila al editar y las eliminadas lógicamente.
+6. **Orden del listado** `('-due_date', '-pk')`, el mismo del Admin; `-pk` desempata compromisos con la misma fecha.
+
+**Verificado:** 56 tests nuevos (168 en total); mutación de cada defensa (ambos desplegables, scoping de la edición, regla de fecha, exclusión de la propia fila en duplicados y los tres permisos); y prueba por HTTP real con `seed_sgr`: listado 200/200/403 para admin/funcionario/verificador, alta con errores y válida, duplicado, POST sin CSRF (403), compromiso ajeno (404 en GET y POST), intento de reasignar a otra Delegación (rechazado), `?per_page=5`, `99` y `abc` sin error, y log sin 500 ni `UnorderedObjectListWarning`.
+
+**No incluido:** el historial de cambios de estado de RF-018 (`Auditoria`, fuera de alcance por las Decisiones 15 y 17) ni un flujo propio de reasignación de responsable (HU-15, pendiente para Eva 3, Decisión 18).
+
+**Supuestos a confirmar con el docente (no vienen de la rúbrica):**
+- La clave de duplicado (punto 5) y la regla de fecha son criterios propios; cambiarlos toca solo `CommitmentForm.clean()` y `clean_due_date()`. La regla de fecha vive solo en el formulario web: el Admin y el modelo no la aplican.
+- **Zona horaria:** "hoy" sale de `timezone.localdate()`, que sigue `settings.TIME_ZONE`, hoy `'UTC'`. En horario de verano de Chile, desde las 21:00 (20:00 en invierno) la fecha del servidor ya es la de mañana, y elegir la fecha de hoy se rechazaría. Se corrige poniendo `TIME_ZONE = 'America/Santiago'` (decisión de proyecto, no de este patch) o quitando `clean_due_date()`.
+- El formulario deja cambiar `responsible` dentro de la propia Delegación, igual que el Admin. Si se quisiera reservar la reasignación al Delegado (HU-15), habría que bloquear ese campo al editar para el Funcionario.
+- Delegaciones y empleados inactivos (`is_active`) no se filtran en los desplegables, igual que en el Admin.
+- `iexact` en SQLite ignora mayúsculas solo en ASCII: `PÉREZ` no coincide con `Pérez`, así que ese caso no se detecta como duplicado. Es el mismo límite que ya tiene `ActivityForm`.
+- Los mensajes que genera Django (`This field is required.`, `Select a valid choice...`) salen en inglés por `LANGUAGE_CODE = 'en-us'`; afecta a todo el CRUD web y no se toca aquí.

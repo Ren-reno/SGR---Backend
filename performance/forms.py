@@ -1,6 +1,6 @@
 """ModelForms del CRUD web (Fase 6). Un formulario por entidad; 6.1 agrega
-`ActivityForm`, 6.2 `EvidenceForm`, 6.3 `ValidationForm`, y 6.4 agrega el suyo a
-este mismo archivo.
+`ActivityForm`, 6.2 `EvidenceForm`, 6.3 `ValidationForm` y 6.4 `CommitmentForm`,
+todos en este mismo archivo.
 
 Las validaciones de servidor viven acá y en el `clean()` del modelo, no en el
 template ni en JavaScript: lo que el navegador valide es comodidad, lo que
@@ -11,9 +11,9 @@ import re
 from django import forms
 from django.utils import timezone
 
-from organization.models import Employee
-from .models import Activity, CatalogItem, Evidence, Meta, Validation
-from .scoping import scope_queryset_for_user
+from organization.models import Delegation, Employee
+from .models import Activity, CatalogItem, Commitment, Evidence, Meta, Validation
+from .scoping import scope_delegations_for_user, scope_queryset_for_user
 
 # Solo dígitos y los separadores habituales de un teléfono; al menos 7
 # dígitos (evita "1" o "abc" en un campo opcional que, si se llena, debe
@@ -392,5 +392,110 @@ class ValidationForm(forms.ModelForm):
                     'date',
                     'La revisión no puede ser anterior a la fecha de la '
                     f'evidencia ({evidence.date:%d/%m/%Y}).',
+                )
+        return cleaned
+
+
+class CommitmentForm(forms.ModelForm):
+    """Alta y edición de `Commitment` (paso 6.4).
+
+    Recibe `user` (lo pasa la vista) para acotar los DOS desplegables que
+    determinan el ámbito del compromiso, igual que hace
+    `CommitmentAdmin.formfield_for_foreignkey`:
+
+    - `delegation`: solo la Delegación del usuario (`scope_delegations_for_user`;
+      `scope_queryset_for_user` no sirve acá porque `Delegation` no tiene
+      campo `delegation_id`).
+    - `responsible`: solo empleados de esa misma Delegación.
+
+    Sin esto, quien puede crear o editar compromisos de su Delegación podía
+    reasignarlos a otra cambiando el valor en el POST: la vista acota QUÉ
+    registros se ven, no QUÉ valores se escriben. Que `responsible` pertenezca
+    a `delegation` lo exige `Commitment.clean()` (Decisión 17), que
+    `ModelForm` ejecuta solo; acá no se reescribe.
+    """
+
+    class Meta:
+        model = Commitment
+        fields = (
+            'delegation', 'responsible', 'origin', 'requester', 'territory',
+            'due_date', 'support_area', 'status', 'observation',
+        )
+        labels = {
+            'delegation': 'Delegación',
+            'responsible': 'Responsable',
+            'origin': 'Origen',
+            'requester': 'Solicitante',
+            'territory': 'Territorio',
+            'due_date': 'Fecha comprometida',
+            'support_area': 'Área de apoyo',
+            'status': 'Estado',
+            'observation': 'Observación',
+        }
+        help_texts = {
+            'delegation': 'Debe ser la Delegación del responsable.',
+            'due_date': 'No puede ser anterior a hoy (al registrar o al cambiarla).',
+        }
+        widgets = {
+            'due_date': forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
+            'observation': forms.Textarea(attrs={'rows': 3}),
+        }
+
+    def __init__(self, *args, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+        delegations = scope_delegations_for_user(
+            Delegation.objects.all(), user,
+        ).order_by('name')
+        self.fields['delegation'].queryset = delegations
+        self.fields['responsible'].queryset = scope_queryset_for_user(
+            Employee.objects.all(), user, delegation_lookup='',
+        ).order_by('name')
+        # Alta con una sola Delegación posible (el caso de todo usuario que
+        # no es superuser): queda preseleccionada. `self.initial` ya trae la
+        # clave `delegation` en None en un formulario nuevo, por eso no se
+        # pregunta "si no está", sino "si está vacía".
+        if not self.instance.pk and self.initial.get('delegation') is None:
+            only = list(delegations[:2])
+            if len(only) == 1:
+                self.initial['delegation'] = only[0].pk
+
+    def clean_due_date(self):
+        due_date = self.cleaned_data['due_date']
+        # RF-016: compromisos FUTUROS. Solo se exige al registrar o cuando la
+        # fecha cambia: un compromiso vencido tiene que seguir siendo
+        # editable (p. ej. pasarlo a "Realizado") sin tocar su fecha.
+        # `localdate()` sigue `settings.TIME_ZONE` (hoy 'UTC').
+        creating = self.instance.pk is None
+        if (creating or 'due_date' in self.changed_data) \
+                and due_date < timezone.localdate():
+            raise forms.ValidationError(
+                'La fecha comprometida no puede ser anterior a hoy.'
+            )
+        return due_date
+
+    def clean(self):
+        cleaned = super().clean()
+        responsible = cleaned.get('responsible')
+        due_date = cleaned.get('due_date')
+        origin = cleaned.get('origin')
+        requester = cleaned.get('requester')
+        territory = cleaned.get('territory')
+        if responsible and due_date and origin and requester and territory:
+            # Duplicado: mismo responsable, fecha, origen, solicitante y
+            # territorio. Protege del doble clic en "Guardar" y de
+            # re-ingresar lo ya registrado. `objects` excluye los eliminados
+            # lógicamente (Decisión 20), y en edición se excluye la propia
+            # fila. `iexact` en SQLite ignora mayúsculas solo en ASCII
+            # ('PÉREZ' no coincide con 'Pérez'), igual que en ActivityForm.
+            duplicates = Commitment.objects.filter(
+                responsible=responsible, due_date=due_date,
+                origin__iexact=origin, requester__iexact=requester,
+                territory__iexact=territory,
+            ).exclude(pk=self.instance.pk)
+            if duplicates.exists():
+                raise forms.ValidationError(
+                    'Ya existe un compromiso con el mismo responsable, '
+                    'fecha, origen, solicitante y territorio.'
                 )
         return cleaned

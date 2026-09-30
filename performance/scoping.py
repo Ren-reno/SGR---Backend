@@ -46,6 +46,28 @@ def scope_queryset_for_user(queryset, user, delegation_lookup):
     )
 
 
+def scope_delegations_for_user(queryset, user):
+    """La misma regla de `scope_queryset_for_user`, aplicada al propio modelo
+    `Delegation` (paso 6.4).
+
+    Existe aparte porque `scope_queryset_for_user` filtra por
+    `<lookup>delegation_id` y `Delegation` no tiene ese campo (su clave es
+    `id`), así que no sirve para el desplegable `Commitment.delegation`. Es
+    lo que hace `CommitmentAdmin.formfield_for_foreignkey`: superuser ve
+    todas; cualquier otro, solo la de su `Employee`; anónimo o sin
+    `Employee`, ninguna.
+    """
+    if not user.is_authenticated:
+        return queryset.none()
+    if user.is_superuser:
+        return queryset
+    try:
+        employee = user.employee
+    except Employee.DoesNotExist:
+        return queryset.none()
+    return queryset.filter(pk=employee.delegation_id)
+
+
 class DelegationScopedQuerysetMixin:
     """Mixin para `ListView`/`UpdateView`/`DeleteView` basadas en clase.
 

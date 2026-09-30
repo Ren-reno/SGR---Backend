@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Compromisos{% endblock %}
+{% block body_class %} class="wide"{% endblock %}
+{% block content %}
+  <div class="toolbar">
+    <h1>Compromisos</h1>
+    {% if perms.performance.add_commitment %}
+      <a class="btn" href="{% url 'performance:commitment_create' %}">Nuevo compromiso</a>
+    {% endif %}
+  </div>
+
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Fecha comprometida</th>
+          <th>Origen</th>
+          <th>Solicitante</th>
+          <th>Territorio</th>
+          <th>Responsable</th>
+          <th>Delegación</th>
+          <th>Estado</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for commitment in commitments %}
+          <tr>
+            <td>{{ commitment.due_date|date:"d/m/Y" }}</td>
+            <td>{{ commitment.origin }}</td>
+            <td>{{ commitment.requester }}</td>
+            <td>{{ commitment.territory }}</td>
+            <td>{{ commitment.responsible }}</td>
+            <td>{{ commitment.delegation }}</td>
+            <td>
+              <span class="badge {% if commitment.status == 'realizado' %}badge-ok{% elif commitment.status == 'ingresado' %}badge-neutral{% else %}badge-warn{% endif %}">{{ commitment.get_status_display }}</span>
+            </td>
+            <td class="actions">
+              {% if perms.performance.change_commitment %}
+                <a href="{% url 'performance:commitment_update' commitment.pk %}">Editar</a>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr class="empty-row"><td colspan="8">No hay compromisos para mostrar.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% include "performance/partials/pagination.html" %}
+{% endblock %}

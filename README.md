@@ -195,6 +195,25 @@ Crear o editar una validación **no** cambia el estado de revisión de la eviden
 acción "aprobar evidencias en lote" del Admin). La eliminación (SweetAlert2 + borrado lógico) llega
 en el patch final. Ver Decisión 24 en `docs/decisiones.md`, incluidos los supuestos por confirmar.
 
+### Compromisos (paso 6.4)
+
+Mismo patrón que Actividades. Requiere sesión iniciada (sin ella redirige al login):
+
+| URL | Qué hace | Permiso de Django |
+|---|---|---|
+| `/commitments/` | Listado paginado (5 / 15 / 30) de los compromisos de tu Delegación | `view_commitment` |
+| `/commitments/new/` | Alta | `add_commitment` |
+| `/commitments/<id>/edit/` | Edición (un compromiso de otra Delegación responde 404) | `change_commitment` |
+
+Permisos según `seed_sgr` (Decisión 18): **Administrador** y **Funcionario** ven, crean y editan
+(el Funcionario, solo de su Delegación); **Verificador** y **Delegado** reciben 403. Los
+desplegables *Delegación* y *Responsable* solo ofrecen la Delegación propia y sus empleados; la
+Delegación del responsable debe coincidir con la elegida. Además se valida que la fecha
+comprometida no sea anterior a hoy (al registrar o al cambiarla) y que no exista otro compromiso
+con el mismo responsable, fecha, origen, solicitante y territorio. La eliminación llega en el
+patch final. Ver Decisión 25 en `docs/decisiones.md`, que también lista los supuestos sin
+confirmar (uno de ellos, sobre la zona horaria, conviene leerlo).
+
 ## Cuentas de prueba
 
 Credenciales ficticias, generadas por `seed_sgr` — nunca se usan credenciales personales en este
