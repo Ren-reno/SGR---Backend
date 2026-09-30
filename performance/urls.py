@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import activity, evidence
+from .views import activity, evidence, validation
 
 app_name = 'performance'
 
@@ -15,4 +15,7 @@ urlpatterns = [
     # incluido, y con `str` un solo código así haría fallar el listado entero
     # (NoReverseMatch al armar el enlace "Editar").
     path('evidences/<path:pk>/edit/', evidence.EvidenceUpdateView.as_view(), name='evidence_update'),
+    path('validations/', validation.ValidationListView.as_view(), name='validation_list'),
+    path('validations/new/', validation.ValidationCreateView.as_view(), name='validation_create'),
+    path('validations/<int:pk>/edit/', validation.ValidationUpdateView.as_view(), name='validation_update'),
 ]

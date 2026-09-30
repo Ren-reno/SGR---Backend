@@ -172,6 +172,29 @@ Tres particularidades de `Evidence` que conviene conocer antes de la demo:
 La fecha de la evidencia no puede ser futura ni anterior a la de su actividad. Ver Decisión 23 en
 `docs/decisiones.md`.
 
+### Validaciones (paso 6.3)
+
+Tercer CRUD sobre la misma base. Requiere sesión iniciada (sin ella redirige al login):
+
+| URL | Qué hace | Requiere |
+|---|---|---|
+| `/validations/` | Listado paginado (5 / 15 / 30) de las validaciones de tu Delegación | `view_validation` |
+| `/validations/new/` | Alta | `add_validation` **y** ser Verificador o Administrador |
+| `/validations/<id>/edit/` | Edición (una validación de otra Delegación responde 404) | `change_validation` **y** ser Verificador o Administrador |
+
+Igual que en el Admin: **Administrador** hace todo; **Verificador** ve, crea y edita las de su
+Delegación; **Funcionario** y **Delegado** no acceden. Reglas que valida el servidor:
+
+- La decisión es `Aprobada`, `Rechazada` o `Corrección solicitada`; el resultado se deriva de ella.
+- La observación es obligatoria al rechazar o pedir corrección.
+- La fecha no puede ser futura ni anterior a la de la evidencia.
+- Una evidencia solo puede tener una validación (no se ofrecen las ya validadas) y debe tener archivo.
+- Al editar, la evidencia no se puede cambiar.
+
+Crear o editar una validación **no** cambia el estado de revisión de la evidencia (solo lo hace la
+acción "aprobar evidencias en lote" del Admin). La eliminación (SweetAlert2 + borrado lógico) llega
+en el patch final. Ver Decisión 24 en `docs/decisiones.md`, incluidos los supuestos por confirmar.
+
 ## Cuentas de prueba
 
 Credenciales ficticias, generadas por `seed_sgr` — nunca se usan credenciales personales en este

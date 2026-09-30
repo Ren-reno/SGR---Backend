@@ -1,6 +1,6 @@
 """ModelForms del CRUD web (Fase 6). Un formulario por entidad; 6.1 agrega
-`ActivityForm`, 6.2 `EvidenceForm`, y 6.3 y 6.4 agregan los suyos a este mismo
-archivo.
+`ActivityForm`, 6.2 `EvidenceForm`, 6.3 `ValidationForm`, y 6.4 agrega el suyo a
+este mismo archivo.
 
 Las validaciones de servidor viven acá y en el `clean()` del modelo, no en el
 template ni en JavaScript: lo que el navegador valide es comodidad, lo que
@@ -12,7 +12,7 @@ from django import forms
 from django.utils import timezone
 
 from organization.models import Employee
-from .models import Activity, CatalogItem, Evidence, Meta
+from .models import Activity, CatalogItem, Evidence, Meta, Validation
 from .scoping import scope_queryset_for_user
 
 # Solo dígitos y los separadores habituales de un teléfono; al menos 7
@@ -237,5 +237,160 @@ class EvidenceForm(forms.ModelForm):
                     'date',
                     'La fecha de la evidencia no puede ser anterior a la de '
                     f'su actividad ({activity.date:%d/%m/%Y}).',
+                )
+        return cleaned
+
+
+# --- Paso 6.3: Validation --------------------------------------------------
+# Valores de `Validation.decision`. La Guía (HU-11 / RF-013) dice que el
+# verificador "puede aprobarla, rechazarla o solicitar corrección". 'Aprobada'
+# es el valor que ya escriben el seed y la acción masiva del Admin; los otros
+# dos son la redacción elegida acá (supuesto a confirmar, ver Decisión 24).
+# `decision` sigue siendo texto libre en el modelo, así que las opciones viven
+# en el formulario y no exigen migración.
+DECISION_APPROVED = 'Aprobada'
+DECISION_REJECTED = 'Rechazada'
+DECISION_CORRECTION = 'Corrección solicitada'
+DECISION_CHOICES = (
+    (DECISION_APPROVED, DECISION_APPROVED),
+    (DECISION_REJECTED, DECISION_REJECTED),
+    (DECISION_CORRECTION, DECISION_CORRECTION),
+)
+
+# Grupo que ya usa ValidationAdmin.formfield_for_foreignkey para el desplegable
+# `employee`: solo un Employee cuyo usuario es Verificador puede figurar como
+# quien emitió la revisión.
+VERIFIER_GROUP = 'Verificador'
+
+
+class ValidationForm(forms.ModelForm):
+    """Alta y edición de `Validation` (paso 6.3).
+
+    Reproduce lo que ya hace `ValidationAdmin` y lo lleva a la web:
+
+    - `evidence` y `employee` se acotan con `scope_queryset_for_user` (el
+      scoping de la vista solo acota lo que se ve, no lo que se escribe).
+    - `evidence` solo ofrece evidencias SIN validación. `Validation.evidence`
+      es OneToOne (0..1) y la Decisión 9 descartó re-aprobar creando otra
+      fila; una validación eliminada lógicamente también sigue ocupando el
+      lugar (`validation__isnull` mira la tabla completa, no el manager). Al
+      editar, `evidence` queda de solo lectura: una revisión no se mueve a
+      otra evidencia.
+    - `result` no se pide: se deriva de `decision` (RN-009: solo una
+      validación aprobada aporta puntaje), así que nunca pueden contradecirse.
+    - `version` no se edita: su semántica no está confirmada (Decisión 24).
+    """
+
+    decision = forms.ChoiceField(
+        label='Decisión',
+        choices=(('', 'Seleccione una decisión'),) + DECISION_CHOICES,
+    )
+
+    class Meta:
+        model = Validation
+        fields = ('evidence', 'employee', 'decision', 'date', 'notes')
+        labels = {
+            'evidence': 'Evidencia',
+            'employee': 'Verificador',
+            'date': 'Fecha de la revisión',
+            'notes': 'Observación',
+        }
+        help_texts = {
+            'date': 'No puede ser futura ni anterior a la fecha de la evidencia.',
+            'notes': 'Obligatoria al rechazar o solicitar corrección.',
+        }
+        widgets = {
+            'date': forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
+            'notes': forms.Textarea(attrs={'rows': 3}),
+        }
+
+    def __init__(self, *args, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+        editing = bool(self.instance.pk)
+
+        if editing:
+            # Solo su propia evidencia, para que el campo deshabilitado siga
+            # validando contra su queryset.
+            evidence_qs = Evidence.objects.filter(pk=self.instance.evidence_id)
+        else:
+            evidence_qs = Evidence.objects.filter(validation__isnull=True)
+        evidence = self.fields['evidence']
+        evidence.queryset = scope_queryset_for_user(
+            evidence_qs, user, delegation_lookup='activity__employee__',
+        ).select_related('activity__employee').order_by('-date', 'code')
+        evidence.label_from_instance = lambda obj: (
+            f'{obj.code} · {obj.date:%d/%m/%Y} · {obj.activity.employee.name}'
+        )
+        evidence.error_messages['invalid_choice'] = (
+            'Esta evidencia no está disponible: ya tiene una validación o '
+            'no pertenece a su Delegación.'
+        )
+        if editing:
+            evidence.disabled = True
+            evidence.help_text = (
+                'La evidencia no se puede cambiar una vez validada.'
+            )
+
+        employee = self.fields['employee']
+        employee.queryset = scope_queryset_for_user(
+            Employee.objects.filter(user__groups__name=VERIFIER_GROUP).distinct(),
+            user, delegation_lookup='',
+        ).order_by('name')
+        employee.error_messages['invalid_choice'] = (
+            'Seleccione un verificador de la lista.'
+        )
+
+        self.fields['date'].widget.attrs['max'] = timezone.localdate().isoformat()
+
+        if not editing:
+            # Comodidad: quien revisa suele ser quien registra, y la fecha
+            # habitual es hoy. Solo son valores iniciales; el servidor valida
+            # lo que llegue.
+            own = employee.queryset.filter(user=user).first()
+            if own is not None:
+                self.initial.setdefault('employee', own.pk)
+            self.initial.setdefault('date', timezone.localdate())
+
+    def clean_evidence(self):
+        evidence = self.cleaned_data['evidence']
+        # Mismo criterio que la Decisión 9(b) para la acción masiva: no se
+        # revisa una evidencia sin archivo. Solo al crear; una revisión ya
+        # emitida se puede editar aunque el archivo se haya quitado después.
+        if not self.instance.pk and not evidence.file:
+            raise forms.ValidationError(
+                'La evidencia no tiene archivo cargado; no se puede validar.'
+            )
+        return evidence
+
+    def clean_notes(self):
+        return self.cleaned_data['notes'].strip()
+
+    def clean(self):
+        cleaned = super().clean()
+        decision = cleaned.get('decision')
+        date = cleaned.get('date')
+        evidence = cleaned.get('evidence')
+
+        if decision:
+            # RN-009: solo una validación aprobada aporta puntaje.
+            self.instance.result = decision == DECISION_APPROVED
+            # CA-02 / HU-11: el rechazo conserva y muestra el motivo; pedir
+            # una corrección sin decir cuál no le sirve a quien la recibe.
+            if decision != DECISION_APPROVED and not cleaned.get('notes'):
+                self.add_error(
+                    'notes',
+                    'La observación es obligatoria al rechazar o solicitar '
+                    'corrección.',
+                )
+
+        if date:
+            if date > timezone.localdate():
+                self.add_error('date', 'La fecha de la revisión no puede ser futura.')
+            elif evidence and date < evidence.date:
+                self.add_error(
+                    'date',
+                    'La revisión no puede ser anterior a la fecha de la '
+                    f'evidencia ({evidence.date:%d/%m/%Y}).',
                 )
         return cleaned
