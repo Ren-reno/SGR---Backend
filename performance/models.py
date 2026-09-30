@@ -6,7 +6,7 @@ from django.db.models import ProtectedError
 
 from organization.models import Delegation, Employee, Position
 from .soft_delete import SoftDeleteModel
-
+from .validators import validate_evidence_file
 
 class Period(models.Model):
     """Antes Periodo (Decisión 13). inicio -> start_date, termino ->
@@ -414,7 +414,7 @@ class Evidence(SoftDeleteModel):
     activity = models.ForeignKey(
         Activity, on_delete=models.PROTECT, related_name='evidence_items'
     )
-    file = models.FileField(upload_to='evidence/%Y/%m/')
+    file = models.FileField(upload_to='evidence/%Y/%m/', validators=[validate_evidence_file],)
     date = models.DateField()
     metadata = models.TextField(blank=True)
     review_status = models.CharField(max_length=30, default='pendiente')
