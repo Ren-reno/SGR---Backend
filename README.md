@@ -227,6 +227,14 @@ con el mismo responsable, fecha, origen, solicitante y territorio. La eliminaci�
 *Eliminación* (Decisión 28). Ver Decisión 25 en `docs/decisiones.md`, que también lista los supuestos sin
 confirmar (uno de ellos, sobre la zona horaria, quedó resuelto en la Decisión 27).
 
+**Registros inactivos.** Los desplegables *Delegación* y *Responsable* ofrecen solo registros activos
+(`is_active`). Al editar se conserva el valor que el compromiso ya tenía aunque hoy esté inactivo, para
+que un compromiso antiguo siga pudiéndose guardar. Si la Delegación de tu cuenta está inactiva no queda
+ninguna para elegir: no puedes registrar compromisos nuevos, pero sí editar los existentes. El Admin no
+aplica este filtro. Siguen como limitaciones conocidas que el responsable se puede reasignar dentro de la
+propia Delegación (HU-15 queda fuera de alcance) y que el chequeo de duplicados en SQLite solo ignora
+mayúsculas en ASCII (`PÉREZ` no coincide con `Pérez`). Ver Decisión 32 en `docs/decisiones.md`.
+
 ### Eliminación (Fase 7, patches 12, 14 y 15)
 
 Cada fila del listado de Actividades, Evidencias, Validaciones y Compromisos muestra un botón **Eliminar** solo a

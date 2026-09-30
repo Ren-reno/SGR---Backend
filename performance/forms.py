@@ -9,6 +9,7 @@ importa es lo que el servidor rechaza.
 import re
 
 from django import forms
+from django.db.models import Q
 from django.utils import timezone
 
 from organization.models import Delegation, Employee
@@ -396,6 +397,25 @@ class ValidationForm(forms.ModelForm):
         return cleaned
 
 
+def _active_or_current(queryset, current_pk=None):
+    """`queryset` reducido a los registros vigentes (`is_active=True`), más el
+    registro `current_pk` aunque esté inactivo (Decisión 32).
+
+    Es el mismo criterio que `ActivityForm` aplica a `attention`: un compromiso
+    guardado con un valor que después se dio de baja tiene que poder seguir
+    editándose. Si su propio valor dejara de ser una opción válida, guardarlo
+    sin tocar ese campo fallaría con \"Select a valid choice\".
+
+    Se llama SIEMPRE sobre un queryset ya acotado por Delegación: el valor
+    conservado no puede saltarse el scoping, porque el filtro se suma a lo
+    que ya venía filtrado y no lo reemplaza.
+    """
+    condition = Q(is_active=True)
+    if current_pk is not None:
+        condition |= Q(pk=current_pk)
+    return queryset.filter(condition)
+
+
 class CommitmentForm(forms.ModelForm):
     """Alta y edición de `Commitment` (paso 6.4).
 
@@ -413,6 +433,10 @@ class CommitmentForm(forms.ModelForm):
     registros se ven, no QUÉ valores se escriben. Que `responsible` pertenezca
     a `delegation` lo exige `Commitment.clean()` (Decisión 17), que
     `ModelForm` ejecuta solo; acá no se reescribe.
+
+    Además, ambos desplegables ofrecen solo registros activos (`is_active`),
+    salvo el valor que el compromiso ya tiene asignado al editarlo (Decisión
+    32). El Admin no aplica este filtro.
     """
 
     class Meta:
@@ -444,12 +468,21 @@ class CommitmentForm(forms.ModelForm):
     def __init__(self, *args, user, **kwargs):
         super().__init__(*args, **kwargs)
         self.user = user
-        delegations = scope_delegations_for_user(
-            Delegation.objects.all(), user,
+        # Solo vigentes (Decisión 32). Al editar se conserva lo que el
+        # compromiso ya tiene asignado aunque hoy esté inactivo; en un alta
+        # (sin `pk`) no hay nada que conservar. El scoping va primero: el valor
+        # conservado también tiene que pertenecer a la Delegación del usuario.
+        saved = self.instance if self.instance.pk else None
+        delegations = _active_or_current(
+            scope_delegations_for_user(Delegation.objects.all(), user),
+            saved.delegation_id if saved else None,
         ).order_by('name')
         self.fields['delegation'].queryset = delegations
-        self.fields['responsible'].queryset = scope_queryset_for_user(
-            Employee.objects.all(), user, delegation_lookup='',
+        self.fields['responsible'].queryset = _active_or_current(
+            scope_queryset_for_user(
+                Employee.objects.all(), user, delegation_lookup='',
+            ),
+            saved.responsible_id if saved else None,
         ).order_by('name')
         # Alta con una sola Delegación posible (el caso de todo usuario acotado
         # a la suya, o sea quien no es Administrador): queda preseleccionada. `self.initial` ya trae la

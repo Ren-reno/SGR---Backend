@@ -646,9 +646,9 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 **Supuestos a confirmar con el docente (no vienen de la rúbrica):**
 - La clave de duplicado (punto 5) y la regla de fecha son criterios propios; cambiarlos toca solo `CommitmentForm.clean()` y `clean_due_date()`. La regla de fecha vive solo en el formulario web: el Admin y el modelo no la aplican.
 - **Zona horaria:** "hoy" sale de `timezone.localdate()`, que sigue `settings.TIME_ZONE`, hoy `'UTC'`. En horario de verano de Chile, desde las 21:00 (20:00 en invierno) la fecha del servidor ya es la de mañana, y elegir la fecha de hoy se rechazaría. Se corrige poniendo `TIME_ZONE = 'America/Santiago'` (decisión de proyecto, no de este patch) o quitando `clean_due_date()`. **Resuelto por la Decisión 27:** `TIME_ZONE = 'America/Santiago'`.
-- El formulario deja cambiar `responsible` dentro de la propia Delegación, igual que el Admin. Si se quisiera reservar la reasignación al Delegado (HU-15), habría que bloquear ese campo al editar para el Funcionario.
-- Delegaciones y empleados inactivos (`is_active`) no se filtran en los desplegables, igual que en el Admin.
-- `iexact` en SQLite ignora mayúsculas solo en ASCII: `PÉREZ` no coincide con `Pérez`, así que ese caso no se detecta como duplicado. Es el mismo límite que ya tiene `ActivityForm`.
+- El formulario deja cambiar `responsible` dentro de la propia Delegación, igual que el Admin. Si se quisiera reservar la reasignación al Delegado (HU-15), habría que bloquear ese campo al editar para el Funcionario. **Resuelto por la Decisión 32:** no se restringe; queda como limitación conocida.
+- Delegaciones y empleados inactivos (`is_active`) no se filtran en los desplegables, igual que en el Admin. **Resuelto por la Decisión 32:** el formulario web ya los filtra (el Admin no).
+- `iexact` en SQLite ignora mayúsculas solo en ASCII: `PÉREZ` no coincide con `Pérez`, así que ese caso no se detecta como duplicado. Es el mismo límite que ya tiene `ActivityForm`. **Decidido en la Decisión 32:** limitación conocida, no se corrige.
 - Los mensajes que genera Django (`This field is required.`, `Select a valid choice...`) salen en inglés por `LANGUAGE_CODE = 'en-us'`; afecta a todo el CRUD web y no se toca aquí.
 
 ---
@@ -864,3 +864,27 @@ Prueba por HTTP real (`seed_sgr` + `runserver`), 31 comprobaciones con las 3 cue
 - **`user_can_review` (rol de revisor, Decisión 24) conserva su propia comprobación** de superuser o grupos `Administrador` / `Verificador`. Es la dimensión de rol, no la de alcance, y coincide con `_is_verifier(request) or _unrestricted(request)` del Admin; no se unificó para no ampliar el patch.
 
 **Alternativas descartadas:** dejarlo como limitación conocida (vale 6 pts en vez de 10); copiar la comprobación del grupo en `scoping.py` sin compartirla con el Admin (la divergencia volvería a ser posible); mover el criterio a un permiso de modelo (excede la decisión y cambia el seed).
+
+
+### Decisión 32 — `CommitmentForm`: solo registros activos en los desplegables (Fase 6, patch 18)
+
+**Origen:** ajuste 3.7 de los pendientes de la Fase 6, decidido por el equipo el 29-sep-2026. Cierra tres de los supuestos que dejó la Decisión 25 (reasignación de `responsible`, registros inactivos y `iexact` con tildes). Solo cambia `CommitmentForm`: no toca modelos, migraciones, el Admin ni el seed.
+
+**Decisión:**
+1. **Los dos desplegables ofrecen solo registros activos.** `delegation` y `responsible` se acotan a `is_active=True`, después del scoping por Delegación (Decisión 25 punto 4). Un POST con un valor inactivo se rechaza en el servidor con el error normal de opción inválida, aunque el valor se envíe a mano.
+2. **Al editar se conserva el valor que el compromiso ya tiene guardado**, aunque hoy esté inactivo. Sin esto, un compromiso antiguo cuyo responsable se dio de baja no se podría guardar (ni siquiera para pasarlo a "En proceso"), porque su propio valor dejaría de ser una opción válida. Solo se conserva ese valor: no los demás inactivos, y un alta (sin `pk`) no conserva nada. El valor conservado se suma **dentro** del scoping y no por encima: nadie obtiene una opción de otra Delegación por estar "conservada".
+3. **Implementación:** `_active_or_current(queryset, current_pk)` en `performance/forms.py`, usada dos veces en `CommitmentForm.__init__`. Es el mismo criterio que `ActivityForm` ya aplica a `attention` desde 6.1 (vigentes más el actual), escrito con un `Q` en vez de unir dos querysets.
+4. **La reasignación de `responsible` no se restringe.** HU-15 (P2) está fuera de alcance por la Decisión 18 (Eva 3, junto con `delegado_demo`), y hoy solo se puede reasignar dentro de la propia Delegación, porque `Commitment.clean()` exige que responsable y delegación coincidan (Decisión 17). Queda como limitación conocida.
+5. **`iexact` con tildes no se corrige.** En SQLite ignora mayúsculas solo en ASCII (`PÉREZ` no coincide con `Pérez`), así que ese caso no se detecta como duplicado; en PostgreSQL desaparece y en MySQL depende de la collation. No se verificó qué base usará el despliegue en AWS Academy. Corregirlo exigiría comparar en Python o guardar un campo normalizado.
+
+**Efectos visibles:**
+- Quien solo puede elegir su propia Delegación y esta está inactiva **no puede registrar compromisos nuevos**: el desplegable queda vacío y no hay nada que preseleccionar. Sí puede seguir editando los existentes, porque se conserva su valor.
+- El formulario web y el Admin ahora difieren: `CommitmentAdmin.formfield_for_foreignkey` sigue ofreciendo los inactivos. El ajuste 3.7 nombra solo a `CommitmentForm`, así que el Admin no se tocó.
+- El error de una opción inválida sale en inglés (`Select a valid choice...`) por `LANGUAGE_CODE = 'en-us'` (ajuste 3.4, no se cambia). Con la interfaz normal solo se ve si el registro se da de baja mientras el formulario está abierto.
+
+**Verificación:** 26 tests nuevos en `performance/tests_commitment_inactive_web.py` (los `queryset` de los dos desplegables, el alta, la edición, el valor conservado y su relación con el scoping, la instancia sin guardar, el usuario sin `Employee` y el superuser). Se comprobó por mutación que cada pieza tiene un test que falla al romperla: 9 mutaciones (sin filtro en `delegation`, sin filtro en `responsible`, el helper sin filtrar nada, sin conservar el responsable, sin conservar la delegación, conservar todos los inactivos, el valor conservado por encima del scoping en cada uno de los dos desplegables y conservarlo también en un alta). Prueba por HTTP real (`seed_sgr` más `runserver`, con dos empleados extra en la Delegación Norte): 24 comprobaciones con `funcionario_demo` y `admin_sgr`, entre ellas el POST manual con un responsable inactivo, la edición de un compromiso cuyo responsable y cuya Delegación quedaron inactivos, y el cambio a otro inactivo; sin `Traceback` ni 500 en el log del servidor.
+
+**Pendientes que deja este patch:**
+- [ ] **Otros formularios con el mismo caso.** Al construir este patch se resolvió la duda que dejaba abierta el ajuste 3.7: `ActivityForm.employee` y `ValidationForm.employee` tampoco filtran `Employee.is_active`, así que ofrecen empleados dados de baja. `EvidenceForm` no tiene el caso: su único desplegable de FK es `activity` y `Activity` no tiene `is_active` (tampoco `Evidence`, para `ValidationForm.evidence`). No se cambió aquí porque el ajuste 3.7 nombra solo a `CommitmentForm`; si se decide extenderlo, `_active_or_current()` sirve tal cual.
+
+**Alternativas descartadas:** filtrar también en el Admin (fuera del ajuste 3.7); validar `is_active` en `Commitment.clean()` (alcanzaría también al Admin, y el ajuste habla del formulario web); marcar la opción conservada como "(inactivo)" en el desplegable (no se pidió; sería un cambio aparte).
