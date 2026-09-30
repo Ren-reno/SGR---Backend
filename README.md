@@ -350,3 +350,15 @@ java -jar plantuml.jar -tpng docs/assets/mer_evaluacion_2_django_admin.puml docs
 ```
 (descargar `plantuml.jar` desde https://plantuml.com/download si no está en el equipo; no se
 versiona en el repo, solo el resultado `.png`).
+
+## Volumen de datos de prueba (Fase 8)
+
+Además del seed curado (`seed_sgr`, usado para la demostración en vivo), el proyecto incluye
+un segundo comando que agrega volumen sin tocar los datos curados:
+
+\`\`\`powershell
+python manage.py seed_sgr              # primero, si no lo has corrido
+python manage.py generate_volume_data  # agrega ~1.000 registros adicionales
+\`\`\`
+
+Parámetros opcionales: `--activities`, `--evidences`, `--commitments` (por defecto 700/250/50).
