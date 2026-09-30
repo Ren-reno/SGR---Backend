@@ -329,6 +329,13 @@ class EvidenceAdmin(admin.ModelAdmin):
     ordering = ('-date',)
     list_select_related = ('activity',)
 
+    # Decisión 33: el código lo genera el sistema (RF-011) y es editable=False,
+    # así que el Admin solo puede mostrarlo. `readonly_fields` lo saca del
+    # formulario; `fields` lo deja primero, porque solo con `readonly_fields`
+    # iría al final.
+    fields = ('code', 'activity', 'file', 'date', 'metadata', 'review_status')
+    readonly_fields = ('code',)
+
     # --- Fase 5, lo único que agrega esta fase ---
     inlines = [ValidationInline]
     actions = ['approve_evidence_in_bulk']

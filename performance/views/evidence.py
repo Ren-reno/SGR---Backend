@@ -64,8 +64,12 @@ class EvidenceCreateView(
     PermissionRequiredMixin, _EvidenceFormMixin, SuccessMessageMixin, CreateView,
 ):
     permission_required = 'performance.add_evidence'
-    success_message = 'Evidencia registrada.'
     extra_context = {'page_title': 'Nueva evidencia'}
+
+    def get_success_message(self, cleaned_data):
+        # Quien carga no escribe el código (Decisión 33): el mensaje le dice
+        # cuál recibió la evidencia.
+        return f'Evidencia {self.object.code} registrada.'
 
 
 class EvidenceUpdateView(

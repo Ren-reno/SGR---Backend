@@ -99,9 +99,14 @@ class EvidenceWebTestData(TestCase):
         self.ev_a = self._make_evidence('EVID-A', self.act_a)
         self.ev_b = self._make_evidence('EVID-B', self.act_b)
 
+    def created(self):
+        """La evidencia que acaba de crear el formulario: la única que no es
+        `ev_a` ni `ev_b`. Quien carga no escribe el código (Decisión 33), así
+        que ya no se la puede buscar por él."""
+        return Evidence.objects.exclude(pk__in=[self.ev_a.pk, self.ev_b.pk]).get()
+
     def payload(self, activity=None, **overrides):
         data = {
-            'code': 'EVID-NEW',
             'activity': (activity or self.act_a).pk,
             'date': '2026-06-05',
             'metadata': 'Foto de prueba',
@@ -161,8 +166,9 @@ class EvidenceListTests(EvidenceWebTestData):
         self.assertContains(self.client.get(self.url), self.ev_a.file.url)
 
     def test_code_with_slash_does_not_break_the_list(self):
-        # Un código así solo puede venir del Admin (el formulario web lo
-        # rechaza); con un converter `str` haría fallar el listado entero.
+        # Ya no lo genera el sistema (Decisión 33), pero puede existir en una
+        # fila anterior o creada por ORM; con un converter `str` haría fallar
+        # el listado entero.
         odd = self._make_evidence('A/B', self.act_a)
         self.client.force_login(self.func_a)
         response = self.client.get(self.url)
@@ -205,7 +211,9 @@ class EvidenceCreateTests(EvidenceWebTestData):
         self.client.force_login(self.root)
         response = self.client.post(self.url, self.payload())
         self.assertRedirects(response, reverse('performance:evidence_list'))
-        created = Evidence.objects.get(code='EVID-NEW')
+        created = self.created()
+        # `EVID-A` y `EVID-B` no tienen la forma EVID-<dígitos>: no cuentan.
+        self.assertEqual(created.code, 'EVID-0001')
         self.assertEqual(created.activity, self.act_a)
         self.assertTrue(created.file.name.startswith('evidence/'))
         with created.file.open('rb') as fh:
@@ -215,7 +223,7 @@ class EvidenceCreateTests(EvidenceWebTestData):
         self.client.force_login(self.adder_a)
         response = self.client.post(self.url, self.payload())
         self.assertRedirects(response, reverse('performance:evidence_list'))
-        self.assertTrue(Evidence.objects.filter(code='EVID-NEW').exists())
+        self.assertEqual(self.created().activity, self.act_a)
 
     def test_cannot_attach_to_activity_of_other_delegation(self):
         # El bypass que el scoping de la vista, por sí solo, no cierra.
@@ -239,58 +247,63 @@ class EvidenceCreateTests(EvidenceWebTestData):
         self.client.force_login(self.root)
         response = self.client.post(self.url, {})
         errors = response.context['form'].errors
-        for field in ('code', 'activity', 'file', 'date'):
+        for field in ('activity', 'file', 'date'):
             self.assertIn(field, errors)
+        self.assertNotIn('code', errors)
 
-    def test_duplicate_code_is_rejected_case_insensitively(self):
+    def test_code_is_not_a_field_of_the_form(self):
+        # RF-011 / Decisión 33: lo genera el sistema; quien carga no lo escribe.
+        self.client.force_login(self.root)
+        response = self.client.get(self.url)
+        self.assertNotIn('code', response.context['form'].fields)
+        self.assertNotContains(response, 'name="code"')
+        self.assertContains(response, 'El sistema asigna el código al guardar')
+
+    def test_the_system_assigns_consecutive_codes(self):
+        self.client.force_login(self.root)
+        self.client.post(self.url, self.payload())
+        self.client.post(self.url, self.payload())
+        codes = Evidence.objects.exclude(
+            pk__in=[self.ev_a.pk, self.ev_b.pk]).values_list('pk', flat=True)
+        self.assertEqual(sorted(codes), ['EVID-0001', 'EVID-0002'])
+
+    def test_success_message_says_which_code_was_assigned(self):
+        self.client.force_login(self.root)
+        response = self.client.post(self.url, self.payload(), follow=True)
+        self.assertEqual(
+            [str(m) for m in response.context['messages']],
+            ['Evidencia EVID-0001 registrada.'])
+
+    def test_a_code_sent_in_the_post_is_ignored(self):
+        # Antes un código repetido se rechazaba con un error del formulario.
+        # Ahora el campo no existe: lo enviado no se lee, se crea una evidencia
+        # nueva con código generado y la existente no se toca.
         self.client.force_login(self.root)
         before = Evidence.objects.count()
-        for code in ('EVID-A', 'evid-a'):
-            response = self.client.post(self.url, self.payload(code=code))
-            self.assertEqual(response.status_code, 200)
-            self.assertIn('code', response.context['form'].errors)
-        self.assertEqual(Evidence.objects.count(), before)
+        response = self.client.post(
+            self.url, self.payload(code='EVID-A', metadata='intento de pisar'))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Evidence.objects.count(), before + 1)
+        self.assertEqual(self.created().code, 'EVID-0001')
+        self.ev_a.refresh_from_db()
+        self.assertEqual(self.ev_a.metadata, '')
 
-    def test_code_of_soft_deleted_evidence_cannot_be_reused(self):
-        # La fila eliminada sigue ocupando la clave primaria: sin este
-        # chequeo saldría un IntegrityError (500) al guardar. El código
-        # idéntico también lo frena `SoftDeleteModel.validate_unique`; la
-        # variante con otras mayúsculas (test siguiente) solo la frena el
-        # formulario.
-        self.ev_a.soft_delete()
+    def test_the_code_of_a_soft_deleted_evidence_is_not_reused(self):
+        # La fila eliminada sigue ocupando su código (Decisión 26): el siguiente
+        # número la cuenta, en vez de volver a repartirlo.
+        deleted = self._make_evidence('EVID-0001', self.act_a)
+        deleted.soft_delete()
         self.client.force_login(self.root)
-        response = self.client.post(self.url, self.payload(code='EVID-A'))
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('code', response.context['form'].errors)
-
-    def test_case_variant_of_soft_deleted_code_cannot_be_reused(self):
-        self.ev_a.soft_delete()
-        self.client.force_login(self.root)
-        before = Evidence.all_objects.count()
-        response = self.client.post(self.url, self.payload(code='evid-a'))
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('code', response.context['form'].errors)
-        self.assertEqual(Evidence.all_objects.count(), before)
-
-    def test_invalid_code_format_is_rejected(self):
-        self.client.force_login(self.root)
-        before = Evidence.objects.count()
-        for code in ('EV 01', 'EV/01', 'EV.01', 'ÉV-01'):
-            response = self.client.post(self.url, self.payload(code=code))
-            self.assertIn('code', response.context['form'].errors, code)
-        self.assertEqual(Evidence.objects.count(), before)
-
-    def test_code_longer_than_30_characters_is_rejected(self):
-        self.client.force_login(self.root)
-        response = self.client.post(self.url, self.payload(code='E' * 31))
-        self.assertIn('code', response.context['form'].errors)
+        self.client.post(self.url, self.payload())
+        self.assertEqual(self.created().code, 'EVID-0002')
 
     def test_future_date_is_rejected(self):
         self.client.force_login(self.root)
+        before = Evidence.objects.count()
         tomorrow = timezone.localdate() + timedelta(days=1)
         response = self.client.post(self.url, self.payload(date=tomorrow.isoformat()))
         self.assertIn('date', response.context['form'].errors)
-        self.assertFalse(Evidence.objects.filter(code='EVID-NEW').exists())
+        self.assertEqual(Evidence.objects.count(), before)
 
     def test_date_before_activity_is_rejected(self):
         self.client.force_login(self.root)
@@ -309,8 +322,7 @@ class EvidenceCreateTests(EvidenceWebTestData):
         self.client.post(self.url, self.payload(
             review_status=Evidence.REVIEW_STATUS_APROBADA))
         self.assertEqual(
-            Evidence.objects.get(code='EVID-NEW').review_status,
-            Evidence.REVIEW_STATUS_PENDIENTE)
+            self.created().review_status, Evidence.REVIEW_STATUS_PENDIENTE)
 
 
 @override_settings(MEDIA_ROOT=_TEST_MEDIA)
@@ -346,14 +358,18 @@ class EvidenceUpdateTests(EvidenceWebTestData):
         self.assertContains(response, 'Estado de revisión')
         self.assertNotIn('review_status', response.context['form'].fields)
 
-    def test_code_field_is_disabled_when_editing(self):
+    def test_code_is_shown_but_is_not_a_form_field_when_editing(self):
         self.client.force_login(self.func_a)
-        form = self.client.get(self.url(self.ev_a)).context['form']
-        self.assertTrue(form.fields['code'].disabled)
+        response = self.client.get(self.url(self.ev_a))
+        self.assertNotIn('code', response.context['form'].fields)
+        self.assertNotContains(response, 'name="code"')
+        self.assertContains(response, 'Código: <strong>EVID-A</strong>')
 
     def test_code_cannot_be_changed_by_post(self):
-        # Sin `disabled`, cambiar el código haría que save() insertara una
-        # fila nueva y dejara la original: dos evidencias en vez de una.
+        # El código ya no es un campo del formulario (Decisión 33): lo que
+        # llegue por POST no se lee. Si se leyera, cambiarlo haría que save()
+        # insertara una fila nueva y dejara la original: dos evidencias en
+        # vez de una.
         self.client.force_login(self.func_a)
         before = Evidence.all_objects.count()
         response = self.client.post(self.url(self.ev_a), {
@@ -423,8 +439,9 @@ class EvidenceUpdateTests(EvidenceWebTestData):
         self.assertEqual(response.status_code, 302)
 
     def test_evidence_with_legacy_code_stays_editable(self):
-        # Creada fuera del formulario (Admin/ORM) con un código que el
-        # formulario web no aceptaría hoy: editarla no debe exigirle el formato.
+        # Creada por ORM con un código que no sigue el formato EVID-NNNN (una
+        # fila anterior a la Decisión 33): editarla no debe pedirle nada sobre
+        # el código, y el código no cambia.
         odd = self._make_evidence('EV 01/x', self.act_a)
         self.client.force_login(self.func_a)
         response = self.client.post(self.url(odd), {
@@ -432,6 +449,7 @@ class EvidenceUpdateTests(EvidenceWebTestData):
         self.assertEqual(response.status_code, 302)
         odd.refresh_from_db()
         self.assertEqual(odd.metadata, 'ok')
+        self.assertEqual(odd.pk, 'EV 01/x')
 
     def test_soft_deleted_evidence_is_404(self):
         self.ev_a.soft_delete()

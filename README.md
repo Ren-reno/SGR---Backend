@@ -171,9 +171,10 @@ no tiene ninguno.
 
 Tres particularidades de `Evidence` que conviene conocer antes de la demo:
 
-- **El código es la clave primaria y no se puede cambiar** (RN-010): al editar, el campo aparece
-  deshabilitado. Al crear solo admite letras, dígitos, `-` y `_`, y no puede repetir un código
-  existente (sin distinguir mayúsculas), ni uno de una evidencia eliminada.
+- **El código lo genera el sistema y no se puede cambiar** (RF-011, RN-010): al crear no se escribe,
+  se asigna al guardar con el formato `EVID-0001`, `EVID-0002`... (el siguiente número libre; una
+  evidencia eliminada conserva el suyo y no se reutiliza). Al editar se muestra como dato, y un código
+  que llegue por POST se ignora, en la web y en el Admin. Es la clave primaria (Decisión 33).
 - **El estado de revisión no se edita aquí.** Lo fija el flujo de validación; si el formulario lo
   permitiera, quien carga una evidencia podría marcarla "Aprobada" (RN-009). Es un conjunto cerrado
   de tres valores (Pendiente, Aprobada, Rechazada; Decisión 30) y en el Admin se elige de un desplegable.

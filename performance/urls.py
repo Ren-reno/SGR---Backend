@@ -13,9 +13,10 @@ urlpatterns = [
     path('evidences/', evidence.EvidenceListView.as_view(), name='evidence_list'),
     path('evidences/new/', evidence.EvidenceCreateView.as_view(), name='evidence_create'),
     # Evidence usa su código (texto) como clave primaria. Se usa `path` y no
-    # `str` porque el Admin permite códigos con cualquier carácter, "/"
-    # incluido, y con `str` un solo código así haría fallar el listado entero
-    # (NoReverseMatch al armar el enlace "Editar").
+    # `str` porque una evidencia anterior a la Decisión 33 (o creada por ORM)
+    # puede tener un código con cualquier carácter, "/" incluido, y con `str`
+    # un solo código así haría fallar el listado entero (NoReverseMatch al
+    # armar el enlace "Editar"). Los que genera el sistema no llevan "/".
     path('evidences/<path:pk>/edit/', evidence.EvidenceUpdateView.as_view(), name='evidence_update'),
     path('evidences/<path:pk>/delete/', evidence.EvidenceDeleteView.as_view(), name='evidence_delete'),
     path('validations/', validation.ValidationListView.as_view(), name='validation_list'),

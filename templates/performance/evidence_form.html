@@ -4,8 +4,12 @@
   <div class="card">
     <h1>{{ page_title }}</h1>
     {% if object %}
+      {# El código lo genera el sistema y no es un campo del formulario (Decisión 33): se muestra, no se edita #}
+      <p class="help">Código: <strong>{{ object.code }}</strong> (lo asignó el sistema y no se puede cambiar).</p>
       {# review_status no se edita aquí: lo fija el flujo de validación (Decisión 23) #}
       <p class="help">Estado de revisión: <strong>{{ object.get_review_status_display }}</strong> (lo cambia la validación, no este formulario).</p>
+    {% else %}
+      <p class="help">El sistema asigna el código al guardar (EVID-0001, EVID-0002...).</p>
     {% endif %}
     {# enctype obligatorio: Evidence tiene un FileField; sin él el navegador no envía el archivo #}
     <form method="post" enctype="multipart/form-data" novalidate>

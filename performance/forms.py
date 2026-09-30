@@ -121,12 +121,6 @@ class ActivityForm(forms.ModelForm):
         return cleaned
 
 
-# RF-011: el código de evidencia debe servir "para nombrar y vincular" el
-# archivo, así que se limita a letras, dígitos, guion y guion bajo (sin
-# espacios ni "/"). Solo se exige al crear; ver EvidenceForm.clean_code().
-_EVIDENCE_CODE_CHARS = re.compile(r'^[A-Za-z0-9_-]+$')
-
-
 def _activity_label(activity):
     """Texto del desplegable `activity`: `Activity.__str__` solo trae el id y
     el tipo, insuficiente para distinguir dos actividades al elegir una."""
@@ -147,10 +141,12 @@ class EvidenceForm(forms.ModelForm):
     Lo que este formulario decide distinto al de Activity, por cómo es el
     modelo:
 
-    - `code` es la clave primaria y es inmutable (RN-010). Al editar queda
-      `disabled`: Django ignora lo que llegue por POST para ese campo. Sin
-      eso, cambiar el código en el POST haría que `save()` insertara una fila
-      nueva y dejara la original intacta.
+    - `code` NO está en el formulario. Es la clave primaria y lo genera el
+      sistema al guardar (`Evidence.save()`, RF-011, Decisión 33); como el
+      campo es `editable=False`, un `code` que llegue por POST se ignora. Así
+      se evita la trampa de una clave primaria editable: cambiarla haría que
+      `save()` insertara una fila nueva y dejara la original intacta
+      (RN-010).
     - `review_status` NO está en el formulario. Es el resultado del flujo de
       validación (Decisión 9-bis: lo actualiza quien valida, no quien carga),
       y dejarlo editable permitiría a un Funcionario marcar su propia
@@ -162,16 +158,14 @@ class EvidenceForm(forms.ModelForm):
 
     class Meta:
         model = Evidence
-        fields = ('code', 'activity', 'file', 'date', 'metadata')
+        fields = ('activity', 'file', 'date', 'metadata')
         labels = {
-            'code': 'Código',
             'activity': 'Actividad',
             'file': 'Archivo',
             'date': 'Fecha',
             'metadata': 'Metadatos',
         }
         help_texts = {
-            'code': 'Único e inmutable. Solo letras, dígitos, guion y guion bajo.',
             'date': 'No puede ser futura ni anterior a la fecha de la actividad.',
             'metadata': 'Opcional: descripción del archivo, cámara, lugar, etc.',
         }
@@ -192,37 +186,6 @@ class EvidenceForm(forms.ModelForm):
         # inglés porque LANGUAGE_CODE es en-us).
         self.fields['file'].widget.initial_text = 'Archivo actual'
         self.fields['file'].widget.input_text = 'Reemplazar por'
-        if not self.instance._state.adding:
-            self.fields['code'].disabled = True
-            self.fields['code'].help_text = (
-                'El código no se puede cambiar una vez creada la evidencia.'
-            )
-
-    def clean_code(self):
-        if not self.instance._state.adding:
-            # Campo deshabilitado: el valor es el de la fila, no uno escrito.
-            # No se le re-aplica el formato, para que una evidencia antigua
-            # con un código "raro" (creada desde el Admin) siga editable.
-            return self.instance.pk
-        code = self.cleaned_data['code']
-        if not _EVIDENCE_CODE_CHARS.match(code):
-            raise forms.ValidationError(
-                'Use solo letras, dígitos, guion (-) y guion bajo (_), '
-                'sin espacios.'
-            )
-        # `all_objects`, no `objects`: una evidencia eliminada lógicamente
-        # sigue ocupando la clave primaria (Decisión 20), así que su código
-        # tampoco se puede reutilizar. `iexact` evita "EVID-001" y "evid-001"
-        # como dos evidencias distintas.
-        clash = Evidence.all_objects.filter(code__iexact=code).first()
-        if clash is not None:
-            if clash.deleted_at is not None:
-                raise forms.ValidationError(
-                    'Ese código perteneció a una evidencia eliminada y no '
-                    'se puede reutilizar.'
-                )
-            raise forms.ValidationError('Ya existe una evidencia con ese código.')
-        return code
 
     def clean(self):
         cleaned = super().clean()
