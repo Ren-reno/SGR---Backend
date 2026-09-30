@@ -4,7 +4,8 @@ Fase 5 del plan formativo).
 El scoping por Delegación ya existe y funciona dentro del Admin desde la
 Decisión 6 (`performance/admin.py`, `get_queryset()` de cada ModelAdmin).
 Esta Fase 5/6 lo EXTIENDE a las vistas web nuevas -- se reutiliza la misma
-regla de negocio, no se rediseña: un superuser ve todo; cualquier otro
+regla de negocio, no se rediseña: un Administrador (superuser o miembro del
+grupo `Administrador`, ver `is_unrestricted`) ve todo; cualquier otro
 usuario ve solo los registros de su propia Delegación, encontrada siguiendo
 la cadena de FKs hasta `Employee.delegation`.
 
@@ -20,12 +21,39 @@ dato que cambia por entidad es `delegation_lookup`; toda la lógica de
 
 from organization.models import Employee
 
+# Grupo cuyos miembros no tienen restricción de Delegación (Decisión 6), aunque
+# no sean superuser técnico de Django.
+UNRESTRICTED_GROUP = 'Administrador'
+
+
+def is_unrestricted(user):
+    """True si `user` es Administrador en cualquiera de sus dos formas
+    (superuser técnico de Django, o miembro del grupo `Administrador`) y por
+    lo tanto no se le aplica el scoping por Delegación.
+
+    Es la única definición de "sin restricción de Delegación" (Decisión 31):
+    la usan el scoping de las vistas web (este módulo) y el Admin
+    (`_unrestricted` en `admin.py`), para que web y Admin no puedan volver a
+    divergir. No mira `Employee`: un Administrador sin fila `Employee` sigue
+    sin restricción, igual que en el Admin (Decisión 6).
+
+    Un anónimo no está sin restricción. Solo decide el alcance de Delegación:
+    los permisos de modelo y el rol de revisor son otra pregunta y se siguen
+    comprobando aparte, en cada vista.
+    """
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return user.groups.filter(name=UNRESTRICTED_GROUP).exists()
+
 
 def scope_queryset_for_user(queryset, user, delegation_lookup):
     """Acota `queryset` a lo que `user` puede ver, según su Delegación.
 
-    Es la única definición de la regla (superuser ve todo; cualquier otro,
-    solo su Delegación; anónimo o sin `Employee`, nada). La usan el mixin de
+    Es la única definición de la regla (un Administrador, ver
+    `is_unrestricted`, ve todo; cualquier otro, solo su Delegación; anónimo o
+    sin `Employee`, nada). La usan el mixin de
     las vistas y los `ModelForm` (para acotar los desplegables de FK: sin
     eso, quien puede editar un registro podría reasignarlo a una
     Delegación ajena cambiando el valor en el POST).
@@ -35,7 +63,7 @@ def scope_queryset_for_user(queryset, user, delegation_lookup):
     """
     if not user.is_authenticated:
         return queryset.none()
-    if user.is_superuser:
+    if is_unrestricted(user):
         return queryset
     try:
         employee = user.employee
@@ -53,13 +81,13 @@ def scope_delegations_for_user(queryset, user):
     Existe aparte porque `scope_queryset_for_user` filtra por
     `<lookup>delegation_id` y `Delegation` no tiene ese campo (su clave es
     `id`), así que no sirve para el desplegable `Commitment.delegation`. Es
-    lo que hace `CommitmentAdmin.formfield_for_foreignkey`: superuser ve
-    todas; cualquier otro, solo la de su `Employee`; anónimo o sin
-    `Employee`, ninguna.
+    lo que hace `CommitmentAdmin.formfield_for_foreignkey`: un Administrador
+    (ver `is_unrestricted`) ve todas; cualquier otro, solo la de su
+    `Employee`; anónimo o sin `Employee`, ninguna.
     """
     if not user.is_authenticated:
         return queryset.none()
-    if user.is_superuser:
+    if is_unrestricted(user):
         return queryset
     try:
         employee = user.employee
@@ -93,8 +121,9 @@ class DelegationScopedQuerysetMixin:
             delegation_lookup = "evidence__activity__employee__"
 
     Reglas, en el orden en que se aplican:
-    1. Superuser: sin filtrar -- ve todas las Delegaciones (igual que
-       `_unrestricted()` en admin.py; ver Decisión 6).
+    1. Administrador (superuser o grupo `Administrador`, `is_unrestricted`):
+       sin filtrar -- ve todas las Delegaciones, igual que `_unrestricted()`
+       en admin.py, que usa la misma función (Decisiones 6 y 31).
     2. Usuario autenticado SIN `Employee` asociado (p. ej. una cuenta de
        staff creada a mano, sin pasar por el seed): `.none()`, nunca la
        tabla completa. Sin este caso, un `OneToOneField` inexistente

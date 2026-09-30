@@ -4,6 +4,7 @@ from django.contrib import admin, messages
 
 from organization.models import Delegation, Employee
 from .models import Period, CatalogItem, Meta, Commitment, Activity, Evidence, Validation
+from .scoping import is_unrestricted
 
 
 def _unrestricted(request):
@@ -26,9 +27,9 @@ def _unrestricted(request):
     bloqueado igual, contradiciendo la Decisión 6. Se centraliza acá y se
     reutiliza en los tres lugares.
     """
-    if request.user.is_superuser:
-        return True
-    return request.user.groups.filter(name="Administrador").exists()
+    # Decisión 31: la definición vive en scoping.py y la comparte el scoping
+    # de las vistas web, para que web y Admin no puedan volver a divergir.
+    return is_unrestricted(request.user)
 
 
 class _NoEmployee:

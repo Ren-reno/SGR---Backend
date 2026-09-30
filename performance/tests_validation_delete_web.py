@@ -65,7 +65,11 @@ class ValidationDeleteTestData(ValidationWebTestData):
             return user, employee
 
         # Perfil "elimina": como el grupo Administrador del seed, pero SIN ser
-        # superuser, para que el scoping por Delegación sí se aplique.
+        # superuser. Desde la Decisión 31 el grupo Administrador tampoco queda
+        # acotado por Delegación (igual que en el Admin), así que este perfil
+        # NO sirve para probar el 404 de scoping: para eso están `verif_del_a`
+        # y `verif_del_no_employee`, que tienen rol y permiso pero no son
+        # Administrador.
         cls.admin_a, _ = make(
             'admin_a', perms=('view_validation', 'delete_validation'),
             group=admin_group, delegation=cls.deleg_a)
@@ -80,10 +84,16 @@ class ValidationDeleteTestData(ValidationWebTestData):
         cls.no_role_del, _ = make(
             'no_role_del', perms=('view_validation', 'delete_validation'),
             delegation=cls.deleg_a)
-        # Rol y permiso correctos, pero sin fila Employee (caso borde).
+        # Administrador con permiso pero sin fila Employee (caso borde):
+        # sin restricción de Delegación, como en el Admin (Decisión 31).
         cls.admin_no_employee, _ = make(
             'admin_no_employee', perms=('view_validation', 'delete_validation'),
             group=admin_group)
+        # Rol de revisor y permiso, sin fila Employee y sin ser Administrador:
+        # el caso borde que sí queda sin acceso (404, nunca 500).
+        cls.verif_del_no_employee, _ = make(
+            'verif_del_no_employee', perms=('view_validation', 'delete_validation'),
+            group=verifier_group)
 
     def make_validation(self, evidence, decision='Aprobada'):
         return Validation.objects.create(
@@ -139,7 +149,7 @@ class ValidationDeleteTests(ValidationDeleteTestData):
         self.assertAlive(self.val_b)
 
     def test_other_delegation_validation_is_404(self):
-        self.client.force_login(self.admin_a)
+        self.client.force_login(self.verif_del_a)
         self.assertEqual(self.client.post(delete_url(self.val_b)).status_code, 404)
         self.assertAlive(self.val_b)
 
@@ -154,7 +164,7 @@ class ValidationDeleteTests(ValidationDeleteTestData):
         theirs_checked_by_me = Validation.objects.create(
             evidence=self.ev_b1, employee=self.emp_verif_a, decision='Aprobada',
             date=self.review_date, result=True)
-        self.client.force_login(self.admin_a)
+        self.client.force_login(self.verif_del_a)
         self.assertEqual(
             self.client.post(delete_url(theirs_checked_by_me)).status_code, 404)
         self.assertAlive(theirs_checked_by_me)
@@ -164,9 +174,24 @@ class ValidationDeleteTests(ValidationDeleteTestData):
             Validation.objects.filter(pk=mine_checked_elsewhere.pk).exists())
 
     def test_user_without_employee_gets_404_not_500(self):
-        self.client.force_login(self.admin_no_employee)
+        self.client.force_login(self.verif_del_no_employee)
         self.assertEqual(self.client.post(delete_url(self.val_a)).status_code, 404)
         self.assertAlive(self.val_a)
+
+    def test_administrator_without_employee_is_unrestricted_like_the_admin(self):
+        # Decisión 31: el grupo Administrador no depende de tener Employee ni
+        # de tener una Delegación; el Admin ya se comporta así (Decisión 6).
+        self.client.force_login(self.admin_no_employee)
+        response = self.client.post(delete_url(self.val_a))
+        self.assertRedirects(response, LIST_URL)
+        self.assertFalse(Validation.objects.filter(pk=self.val_a.pk).exists())
+
+    def test_administrator_group_can_delete_in_another_delegation(self):
+        # Decisión 31: antes era 404 (el scoping web solo eximía al superuser).
+        self.client.force_login(self.admin_a)
+        response = self.client.post(delete_url(self.val_b))
+        self.assertRedirects(response, LIST_URL)
+        self.assertFalse(Validation.objects.filter(pk=self.val_b.pk).exists())
 
     def test_administrator_group_can_delete_in_own_delegation(self):
         self.client.force_login(self.admin_a)
@@ -230,7 +255,7 @@ class ValidationDeleteTests(ValidationDeleteTestData):
         self.assertIn('Validación eliminada.', message_texts(response))
 
     def test_deleted_validation_disappears_from_the_list(self):
-        self.client.force_login(self.admin_a)
+        self.client.force_login(self.verif_del_a)
         self.assertEqual(len(self.client.get(LIST_URL).context['validations']), 1)
         self.client.post(delete_url(self.val_a))
         self.assertEqual(list(self.client.get(LIST_URL).context['validations']), [])
@@ -350,10 +375,18 @@ class ValidationDeleteButtonTests(ValidationDeleteTestData):
         self.assertNotContains(response, '/delete/')
 
     def test_only_rows_of_own_delegation_get_a_button(self):
-        self.client.force_login(self.admin_a)
+        self.client.force_login(self.verif_del_a)
         response = self.client.get(LIST_URL)
         self.assertContains(response, delete_url(self.val_a))
         self.assertNotContains(response, delete_url(self.val_b))
+
+    def test_administrator_group_sees_a_button_on_every_row(self):
+        # Decisión 31: el grupo Administrador (sin ser superuser) ve las
+        # validaciones de todas las Delegaciones, como en el Admin.
+        self.client.force_login(self.admin_a)
+        response = self.client.get(LIST_URL)
+        self.assertContains(response, delete_url(self.val_a))
+        self.assertContains(response, delete_url(self.val_b))
 
     def test_superuser_sees_a_button_on_every_row(self):
         self.client.force_login(self.root)
@@ -367,7 +400,8 @@ class ValidationDeleteButtonTests(ValidationDeleteTestData):
 
     def test_warning_is_fixed_and_costs_no_query_per_row(self):
         # El aviso es el mismo para todas las filas: no consulta nada por fila.
-        self.client.force_login(self.admin_a)
+        # Usuario acotado a la Delegación A: el listado tiene 1 fila al inicio.
+        self.client.force_login(self.verif_del_a)
         self.client.get(LIST_URL)  # calienta sesión y permisos
         with CaptureQueriesContext(connection) as few:
             self.client.get(LIST_URL)

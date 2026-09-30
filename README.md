@@ -125,8 +125,9 @@ Este patch entrega la **base común** del CRUD web de las 4 entidades operativas
 negocio, solo las dos piezas que reutilizarán las 4 vistas de listado cuando se agreguen:
 
 - **`performance/scoping.py` — `DelegationScopedQuerysetMixin`.** Extiende a las vistas
-  web el mismo scoping por Delegación que ya funciona en el Admin (un superuser ve todo;
-  cualquier otro usuario, solo lo de su propia Delegación).
+  web el mismo scoping por Delegación que ya funciona en el Admin (un Administrador, sea
+  superuser o del grupo `Administrador`, ve todo; cualquier otro usuario, solo lo de su propia
+  Delegación). La regla es `is_unrestricted(user)`, compartida con el Admin (Decisión 31).
 - **`performance/pagination.py` — `SessionPaginationMixin`.** Paginación con `Paginator`,
   tamaño elegible entre **5 / 15 / 30**, recordado en `request.session`. Un valor fuera de
   ese conjunto se ignora (normaliza), no se rechaza con error.

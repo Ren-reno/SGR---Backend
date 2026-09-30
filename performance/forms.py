@@ -451,8 +451,8 @@ class CommitmentForm(forms.ModelForm):
         self.fields['responsible'].queryset = scope_queryset_for_user(
             Employee.objects.all(), user, delegation_lookup='',
         ).order_by('name')
-        # Alta con una sola Delegación posible (el caso de todo usuario que
-        # no es superuser): queda preseleccionada. `self.initial` ya trae la
+        # Alta con una sola Delegación posible (el caso de todo usuario acotado
+        # a la suya, o sea quien no es Administrador): queda preseleccionada. `self.initial` ya trae la
         # clave `delegation` en None en un formulario nuevo, por eso no se
         # pregunta "si no está", sino "si está vacía".
         if not self.instance.pk and self.initial.get('delegation') is None:
