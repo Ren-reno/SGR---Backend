@@ -6,6 +6,13 @@ Tres bloques:
   permisos y Delegación.
 - SoftDeleteSeedTests: que el seed no se rompa contra filas eliminadas.
 
+Además, al final del archivo, la base del CRUD web (Fase 6, paso 6.0, Decisión 21):
+- DelegationScopingTests: DelegationScopedQuerysetMixin (performance/scoping.py).
+- SessionPaginationTests: SessionPaginationMixin (performance/pagination.py).
+Los mixins no tienen vista propia todavía (llegan en 6.1 a 6.4), así que se
+prueban contra ListView mínimas armadas en este mismo archivo, no contra una
+URL real del proyecto.
+
 Correr con:  python manage.py test performance
 """
 import shutil
@@ -13,16 +20,22 @@ import tempfile
 from datetime import date
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.db.models import ProtectedError
-from django.test import Client, TestCase, override_settings
+from django.test import Client, RequestFactory, TestCase, override_settings
+from django.views.generic import ListView
 
 from organization.models import Delegation, Employee, Position
 from performance.models import (
     Activity, CatalogItem, Commitment, Evidence, Period, Validation,
 )
+from performance.pagination import (
+    ALLOWED_PER_PAGE, DEFAULT_PER_PAGE, SESSION_KEY, SessionPaginationMixin,
+)
+from performance.scoping import DelegationScopedQuerysetMixin
 
 User = get_user_model()
 
@@ -470,3 +483,328 @@ class SoftDeleteSeedTests(MediaRootMixin, TestCase):
         call_command('seed_sgr', verbosity=0)
         self.assertEqual(Activity.all_objects.count(), 2)
         self.assertEqual(Activity.objects.count(), 2)
+
+
+# ---------------------------------------------------------------------------
+# Vistas mínimas de prueba, una por cada `delegation_lookup` real que usarán
+# 6.1-6.4 -- así el test de scoping cubre los 4 largos de cadena distintos,
+# no solo uno tomado como representante de los demás.
+# ---------------------------------------------------------------------------
+class _BaseListView(DelegationScopedQuerysetMixin, SessionPaginationMixin, ListView):
+    template_name = 'smoke_list_for_tests.html'  # nunca se renderiza: los
+    # tests llaman a get_queryset()/get_context_data() directo, sin pasar
+    # por dispatch(), así que no hace falta que el template exista.
+    context_object_name = 'object_list'
+
+
+class _ActivityListView(_BaseListView):
+    model = Activity
+    delegation_lookup = 'employee__'
+    ordering = ('pk',)  # ver docstring de SessionPaginationMixin: evita
+    # UnorderedObjectListWarning al paginar. Las vistas reales de 6.1
+    # elegirán un orden con sentido de negocio (p. ej. -date); acá basta
+    # con que sea determinista para que los tests de paginación sean
+    # reproducibles.
+
+
+class _EvidenceListView(_BaseListView):
+    model = Evidence
+    delegation_lookup = 'activity__employee__'
+
+
+class _ValidationListView(_BaseListView):
+    model = Validation
+    delegation_lookup = 'evidence__activity__employee__'
+
+
+class _CommitmentListView(_BaseListView):
+    model = Commitment
+    delegation_lookup = ''
+
+
+class _ProtectedActivityListView(LoginRequiredMixin, _ActivityListView):
+    login_url = 'accounts:login'
+
+
+def make_view(view_cls, user, get_params=''):
+    """Instancia la vista y le inyecta una request de prueba con sesión
+    (`SessionMiddleware`), tal como llegaría en un request real."""
+    from django.contrib.sessions.middleware import SessionMiddleware
+
+    rf = RequestFactory()
+    request = rf.get(f'/x/{get_params}')
+    SessionMiddleware(lambda r: None).process_request(request)
+    request.session.save()
+    request.user = user
+
+    view = view_cls()
+    view.request = request
+    view.kwargs = {}
+    return view
+
+
+# ---------------------------------------------------------------------------
+# Fixtures de dominio compartidas: 2 Delegaciones, 1 Employee/1 Activity/
+# 1 Evidence/1 Validation/1 Commitment en cada una -- el mínimo con el que
+# se puede distinguir "veo lo mío" de "veo lo de todos".
+# ---------------------------------------------------------------------------
+class ScopingTestData(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.deleg_a = Delegation.objects.create(id='DEL-A', name='Delegación A', scope='x')
+        cls.deleg_b = Delegation.objects.create(id='DEL-B', name='Delegación B', scope='x')
+        position = Position.objects.create(name='Cargo genérico')
+
+        cls.user_a = User.objects.create_user(username='user_a', password='x', is_staff=True)
+        cls.user_b = User.objects.create_user(username='user_b', password='x', is_staff=True)
+        cls.superuser = User.objects.create_superuser(username='root', password='x', email='r@x.cl')
+        cls.staff_sin_employee = User.objects.create_user(
+            username='huerfano', password='x', is_staff=True)
+
+        cls.emp_a = Employee.objects.create(
+            institutional_id='EMP-A', user=cls.user_a, delegation=cls.deleg_a,
+            position=position, name='Empleado A')
+        cls.emp_b = Employee.objects.create(
+            institutional_id='EMP-B', user=cls.user_b, delegation=cls.deleg_b,
+            position=position, name='Empleado B')
+
+        period = Period.objects.create(
+            start_date='2026-01-01', end_date='2026-12-31',
+            computable_days=200, status='abierto',
+            amber_threshold='70.00', collective_threshold='90.00')
+        attention = CatalogItem.objects.create(
+            category=CatalogItem.CATEGORY_ATTENTION, name='Atención test')
+
+        def make_activity(emp):
+            return Activity.objects.create(
+                employee=emp, period=period, attention=attention,
+                activity_type='t', service='s', sub_attention='sa',
+                date='2026-06-01', request_description='d', action_taken='a',
+                status='registrada')
+
+        cls.activity_a = make_activity(cls.emp_a)
+        cls.activity_b = make_activity(cls.emp_b)
+
+        cls.evidence_a = Evidence.objects.create(
+            code='EV-A', activity=cls.activity_a, file='x/a.pdf', date='2026-06-01')
+        cls.evidence_b = Evidence.objects.create(
+            code='EV-B', activity=cls.activity_b, file='x/b.pdf', date='2026-06-01')
+
+        cls.validation_a = Validation.objects.create(
+            evidence=cls.evidence_a, employee=cls.emp_b, decision='aprobada',
+            date='2026-06-02', result=True)
+        cls.validation_b = Validation.objects.create(
+            evidence=cls.evidence_b, employee=cls.emp_a, decision='aprobada',
+            date='2026-06-02', result=True)
+
+        cls.commitment_a = Commitment.objects.create(
+            delegation=cls.deleg_a, responsible=cls.emp_a, origin='o',
+            requester='r', territory='t', due_date='2026-12-01')
+        cls.commitment_b = Commitment.objects.create(
+            delegation=cls.deleg_b, responsible=cls.emp_b, origin='o',
+            requester='r', territory='t', due_date='2026-12-01')
+
+
+# ---------------------------------------------------------------------------
+# DelegationScopedQuerysetMixin
+# ---------------------------------------------------------------------------
+class DelegationScopingTests(ScopingTestData):
+    def test_activity_scoped_to_own_delegation(self):
+        view = make_view(_ActivityListView, self.user_a)
+        pks = set(view.get_queryset().values_list('pk', flat=True))
+        self.assertEqual(pks, {self.activity_a.pk})
+
+    def test_evidence_scoped_through_two_hops(self):
+        view = make_view(_EvidenceListView, self.user_b)
+        pks = set(view.get_queryset().values_list('pk', flat=True))
+        self.assertEqual(pks, {self.evidence_b.pk})
+
+    def test_validation_scoped_by_activity_owner_not_by_validator(self):
+        """Validation.employee es quien VALIDA (related_name=
+        'validations_performed'), no el dueño de la Activity -- por diseño
+        (Decisión 6) puede ser de otra Delegación que quien la registró.
+        El scoping sigue evidence__activity__employee__delegation, es
+        decir la Delegación DUEÑA de la actividad validada, no la del
+        validador."""
+        # validation_a cuelga de evidence_a -> activity_a -> emp_a
+        # (Delegación A), aunque quien validó fue emp_b (Delegación B).
+        view_a = make_view(_ValidationListView, self.user_a)
+        pks_a = set(view_a.get_queryset().values_list('pk', flat=True))
+        self.assertEqual(pks_a, {self.validation_a.pk})
+
+        # validation_b cuelga de evidence_b -> activity_b -> emp_b
+        # (Delegación B), aunque quien validó fue emp_a.
+        view_b = make_view(_ValidationListView, self.user_b)
+        pks_b = set(view_b.get_queryset().values_list('pk', flat=True))
+        self.assertEqual(pks_b, {self.validation_b.pk})
+
+    def test_commitment_scoped_by_direct_fk(self):
+        view = make_view(_CommitmentListView, self.user_a)
+        pks = set(view.get_queryset().values_list('pk', flat=True))
+        self.assertEqual(pks, {self.commitment_a.pk})
+
+    def test_superuser_sees_everything_in_every_entity(self):
+        cases = [
+            (_ActivityListView, {self.activity_a.pk, self.activity_b.pk}),
+            (_EvidenceListView, {self.evidence_a.pk, self.evidence_b.pk}),
+            (_ValidationListView, {self.validation_a.pk, self.validation_b.pk}),
+            (_CommitmentListView, {self.commitment_a.pk, self.commitment_b.pk}),
+        ]
+        for view_cls, expected in cases:
+            view = make_view(view_cls, self.superuser)
+            pks = set(view.get_queryset().values_list('pk', flat=True))
+            self.assertEqual(pks, expected, view_cls.__name__)
+
+    def test_staff_without_employee_sees_nothing_not_500(self):
+        """Caso real: una cuenta de staff creada a mano en el Admin, sin
+        Employee asociado. Debe dar queryset vacío, nunca una excepción."""
+        for view_cls in (_ActivityListView, _EvidenceListView,
+                         _ValidationListView, _CommitmentListView):
+            view = make_view(view_cls, self.staff_sin_employee)
+            self.assertEqual(list(view.get_queryset()), [], view_cls.__name__)
+
+    def test_anonymous_user_sees_nothing_not_crash(self):
+        """Sin autenticar: AnonymousUser no tiene el descriptor de
+        Employee -- acceder devolvería AttributeError, no
+        Employee.DoesNotExist, si no se cortara antes explícitamente."""
+        from django.contrib.auth.models import AnonymousUser
+        for view_cls in (_ActivityListView, _EvidenceListView,
+                         _ValidationListView, _CommitmentListView):
+            view = make_view(view_cls, AnonymousUser())
+            self.assertEqual(list(view.get_queryset()), [], view_cls.__name__)
+
+    def test_login_required_mixin_intercepts_before_queryset(self):
+        """Patrón real que llevarán las vistas concretas de 6.1-6.4:
+        LoginRequiredMixin corta con redirect ANTES de tocar la base de
+        datos -- el scoping de arriba es una segunda capa de defensa, no
+        la única."""
+        from django.test import Client
+        client = Client()
+        # Ruta de prueba registrada solo para este test, vía RequestFactory
+        # + dispatch manual (no hace falta urlconf real para probarlo).
+        from django.urls import reverse
+        view = _ProtectedActivityListView.as_view()
+        rf = RequestFactory()
+        request = rf.get('/x/')
+        from django.contrib.auth.models import AnonymousUser
+        request.user = AnonymousUser()
+        from django.contrib.sessions.middleware import SessionMiddleware
+        SessionMiddleware(lambda r: None).process_request(request)
+        request.session.save()
+        response = view(request)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse('accounts:login'), response.url)
+
+    def test_delegation_lookup_not_set_raises_explicit_error(self):
+        class _Forgotten(DelegationScopedQuerysetMixin):
+            model = Activity
+
+        view = _Forgotten()
+        view.request = RequestFactory().get('/x/')
+        view.request.user = self.user_a
+        with self.assertRaises(NotImplementedError):
+            view.get_queryset()
+
+
+# ---------------------------------------------------------------------------
+# SessionPaginationMixin
+# ---------------------------------------------------------------------------
+class SessionPaginationTests(ScopingTestData):
+    def setUp(self):
+        super().setUp()
+        # 20 Activity extra en Delegación A para tener de sobra que paginar
+        # (activity_a, de las fixtures de la clase padre, ya suma 1 más).
+        # Se reutilizan self.deleg_a / self.emp_a / el Period y el
+        # CatalogItem ya creados en ScopingTestData.setUpTestData -- NO se
+        # vuelve a consultar con .get() a ciegas, porque otros tests de
+        # esta misma suite (p. ej. los de DelegationScopingTests) corren
+        # en la misma base de datos de prueba y un CatalogItem/Period
+        # sin filtrar podría no ser único.
+        period = self.activity_a.period
+        attention = self.activity_a.attention
+        for _ in range(20):
+            Activity.objects.create(
+                employee=self.emp_a, period=period, attention=attention,
+                activity_type='t', service='s', sub_attention='sa',
+                date='2026-06-01', request_description='d', action_taken='a',
+                status='registrada')
+        # total en Delegación A: 21 (activity_a + 20 nuevas)
+
+    def test_default_page_size_is_15(self):
+        view = make_view(_ActivityListView, self.user_a)
+        self.assertEqual(view.get_paginate_by(None), DEFAULT_PER_PAGE)
+
+    def test_valid_per_page_is_used_and_saved_to_session(self):
+        view = make_view(_ActivityListView, self.user_a, '?per_page=5')
+        self.assertEqual(view.get_paginate_by(None), 5)
+        self.assertEqual(view.request.session[SESSION_KEY], 5)
+
+    def test_session_is_remembered_without_per_page_in_url(self):
+        view1 = make_view(_ActivityListView, self.user_a, '?per_page=30')
+        view1.get_paginate_by(None)
+        # Nueva vista, MISMA sesión (simulada copiando el valor guardado,
+        # como pasaría entre 2 requests reales del mismo navegador).
+        view2 = make_view(_ActivityListView, self.user_a)
+        view2.request.session[SESSION_KEY] = view1.request.session[SESSION_KEY]
+        self.assertEqual(view2.get_paginate_by(None), 30)
+
+    def test_invalid_per_page_is_ignored_keeps_previous(self):
+        view = make_view(_ActivityListView, self.user_a)
+        view.request.session[SESSION_KEY] = 30
+        view.request.GET = view.request.GET.copy()
+        view.request.GET['per_page'] = '999'
+        self.assertEqual(view.get_paginate_by(None), 30)
+
+    def test_non_numeric_per_page_is_ignored(self):
+        view = make_view(_ActivityListView, self.user_a)
+        view.request.session[SESSION_KEY] = 5
+        view.request.GET = view.request.GET.copy()
+        view.request.GET['per_page'] = 'abc'
+        self.assertEqual(view.get_paginate_by(None), 5)
+
+    def test_allowed_values_are_exactly_5_15_30(self):
+        self.assertEqual(ALLOWED_PER_PAGE, (5, 15, 30))
+
+    def test_context_exposes_elided_page_range_not_a_method_call(self):
+        """Regresión: `get_elided_page_range()` es un método con
+        argumentos y NO puede invocarse dentro de `{% for %}` en un
+        template de Django (TemplateSyntaxError). El mixin debe resolverlo
+        en Python y dejarlo en el contexto como lista ya calculada."""
+        view = make_view(_ActivityListView, self.user_a, '?per_page=5')
+        view.object_list = view.get_queryset()
+        context = view.get_context_data()
+        self.assertIn('elided_page_range', context)
+        self.assertIsInstance(context['elided_page_range'], list)
+        # 21 Activity en Delegación A / 5 por página = 5 páginas. En la
+        # página 1, con on_each_side=1 y on_ends=1, la distancia entre la
+        # página 2 y la última (5) es mayor a 1 -> Django intercala una
+        # elipsis en vez de listar 3 y 4 (comportamiento documentado de
+        # `Paginator.get_elided_page_range`, confirmado también a mano:
+        # con 200 páginas, la página 1 da [1, 2, '…', 200]).
+        self.assertEqual(context['page_obj'].paginator.num_pages, 5)
+        self.assertEqual(context['elided_page_range'],
+                         [1, 2, context['page_obj'].paginator.ELLIPSIS, 5])
+
+    def test_last_page_has_the_remainder(self):
+        view = make_view(_ActivityListView, self.user_a, '?per_page=5&page=5')
+        view.object_list = view.get_queryset()
+        context = view.get_context_data()
+        # 21 = 4*5 + 1 -> última página con 1 solo resultado
+        self.assertEqual(len(context['page_obj'].object_list), 1)
+
+    def test_pagination_respects_delegation_scoping(self):
+        """La paginación cuenta y pagina SOLO lo que el scoping ya dejó
+        pasar -- nunca ve ni cuenta los registros de la otra Delegación."""
+        view = make_view(_ActivityListView, self.user_a, '?per_page=30')
+        view.object_list = view.get_queryset()
+        context = view.get_context_data()
+        self.assertEqual(context['page_obj'].paginator.count, 21)  # no 22
+
+    def test_elided_range_has_no_ellipsis_when_few_pages(self):
+        """Con pocas páginas (21 Activity / 30 por página = 1 sola
+        página), el rango elidido no debe traer elipsis de sobra."""
+        view = make_view(_ActivityListView, self.user_a, '?per_page=30')
+        view.object_list = view.get_queryset()
+        context = view.get_context_data()
+        self.assertEqual(context['page_obj'].paginator.num_pages, 1)
+        self.assertEqual(context['elided_page_range'], [1])

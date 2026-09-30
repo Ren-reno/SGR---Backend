@@ -111,6 +111,24 @@ carácter especial**. Se guarda hasheada (PBKDF2 de Django), nunca en texto plan
 python manage.py test
 ```
 
+## CRUD web (en construcción)
+
+Este patch entrega la **base común** del CRUD web de las 4 entidades operativas
+(`Activity`, `Evidence`, `Validation`, `Commitment`): todavía no hay ninguna vista de
+negocio, solo las dos piezas que reutilizarán las 4 vistas de listado cuando se agreguen:
+
+- **`performance/scoping.py` — `DelegationScopedQuerysetMixin`.** Extiende a las vistas
+  web el mismo scoping por Delegación que ya funciona en el Admin (un superuser ve todo;
+  cualquier otro usuario, solo lo de su propia Delegación).
+- **`performance/pagination.py` — `SessionPaginationMixin`.** Paginación con `Paginator`,
+  tamaño elegible entre **5 / 15 / 30**, recordado en `request.session`. Un valor fuera de
+  ese conjunto se ignora (normaliza), no se rechaza con error.
+- **`templates/performance/partials/pagination.html`** y **`templates/base.html`**
+  extendido con las clases de tabla/paginación que usarán las 4 vistas.
+
+Ver Decisión 21 en `docs/decisiones.md` para el detalle completo, incluidos dos errores
+reales que aparecieron al probarlo por HTTP y quedaron corregidos con test de regresión.
+
 ## Cuentas de prueba
 
 Credenciales ficticias, generadas por `seed_sgr` — nunca se usan credenciales personales en este

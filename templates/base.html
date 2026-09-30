@@ -5,6 +5,14 @@ Fase 7 (SweetAlert2) la extienden con `{% extends "base.html" %}` -- por eso
 expone los bloques `title`, `content` y `extra_head`/`extra_js`.
 Sin CDN ni framework CSS: funciona igual en un despliegue sin salida a
 internet, y hay una sola hoja de estilo inline que explicar.
+
+Fase 6: se agrega `{% block body_class %}` (vacío por defecto, así que
+accounts no cambia -- queda `<main>` sin atributo, en vez de un
+`class=""` vacío) para que las vistas de listado escriban
+`{% block body_class %} class="wide"{% endblock %}` y usen todo el ancho
+de la tabla; y las clases .table/.pagination/.badge/.toolbar que usan las
+4 entidades del CRUD, en la misma hoja inline -- no un archivo CSS aparte,
+para no sumar una petición estática más.
 {% endcomment %}
 <!DOCTYPE html>
 <html lang="es">
@@ -22,8 +30,11 @@ internet, y hay una sola hoja de estilo inline que explicar.
     header.top form { margin:0; display:inline; }
     header.top button { background:transparent; border:1px solid #ffffff88; color:#fff; padding:.3rem .8rem; border-radius:4px; cursor:pointer; }
     main { max-width:34rem; margin:2rem auto; padding:0 1rem; }
+    main.wide { max-width:64rem; }
     .card { background:#fff; border:1px solid var(--c-border); border-radius:8px; padding:1.5rem 1.75rem; }
     h1 { margin:0 0 1rem; font-size:1.4rem; }
+    .toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.75rem; margin-bottom:1rem; }
+    .toolbar h1 { margin:0; }
     label { display:block; font-weight:600; margin:1rem 0 .25rem; }
     input[type=text], input[type=password] { width:100%; padding:.55rem .65rem; border:1px solid var(--c-border); border-radius:4px; font-size:1rem; }
     input:focus { outline:2px solid var(--c-primary); outline-offset:1px; }
@@ -39,6 +50,41 @@ internet, y hay una sola hoja de estilo inline que explicar.
     .links { margin-top:1.25rem; font-size:.9rem; }
     .demo-code { font-size:2rem; letter-spacing:.35rem; font-weight:700; text-align:center; padding:.75rem; background:#fff8e1; border:2px dashed #c9a227; border-radius:6px; margin:1rem 0; }
     .demo-note { font-size:.8rem; color:#7a5c00; text-align:center; }
+
+    /* --- Fase 6: listados, paginación, formularios de una entidad --- */
+    .table-wrap { background:#fff; border:1px solid var(--c-border); border-radius:8px; overflow-x:auto; }
+    table.data { width:100%; border-collapse:collapse; font-size:.92rem; }
+    table.data th, table.data td { padding:.6rem .9rem; text-align:left; border-bottom:1px solid var(--c-border); white-space:nowrap; }
+    table.data th { background:#eef1f4; font-weight:600; position:sticky; top:0; }
+    table.data tbody tr:hover { background:#f7f9fb; }
+    table.data td.actions { white-space:nowrap; }
+    table.data td.actions a, table.data td.actions button.link { margin-right:.6rem; font-size:.88rem; }
+    .empty-row td { text-align:center; color:#5b6773; padding:2rem 1rem; }
+
+    .badge { display:inline-block; padding:.15rem .55rem; border-radius:99px; font-size:.78rem; font-weight:600; border:1px solid; }
+    .badge-ok { color:var(--c-ok); border-color:var(--c-ok); background:#eef8f1; }
+    .badge-warn { color:#8a5a00; border-color:#c9a227; background:#fff8e1; }
+    .badge-err { color:var(--c-err); border-color:var(--c-err); background:#fdeeed; }
+    .badge-neutral { color:#4a5560; border-color:var(--c-border); background:#eef1f4; }
+
+    .pagination { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.75rem; margin-top:1rem; font-size:.9rem; }
+    .pagination .pages { display:flex; gap:.3rem; align-items:center; }
+    .pagination .pages a, .pagination .pages span.current, .pagination .pages span.ellipsis {
+      display:inline-flex; min-width:1.9rem; height:1.9rem; align-items:center; justify-content:center;
+      border-radius:4px; text-decoration:none; color:#1c2329; padding:0 .3rem;
+    }
+    .pagination .pages a:hover { background:#e6ebf0; }
+    .pagination .pages span.current { background:var(--c-primary); color:#fff; font-weight:600; }
+    .pagination .pages span.ellipsis { color:#8a94a0; }
+    .pagination .per-page { display:flex; align-items:center; gap:.4rem; }
+    .pagination .per-page a { padding:.15rem .5rem; border:1px solid var(--c-border); border-radius:4px; text-decoration:none; color:#1c2329; }
+    .pagination .per-page a.active { background:var(--c-primary); color:#fff; border-color:var(--c-primary); }
+
+    form.inline-post { display:inline; }
+    button.link { background:none; border:0; padding:0; color:var(--c-primary); cursor:pointer; font:inherit; text-decoration:underline; }
+    a.btn-secondary { display:inline-block; background:#fff; color:var(--c-primary); border:1px solid var(--c-primary); padding:.55rem 1.1rem; border-radius:4px; text-decoration:none; }
+    .field-row { display:grid; gap:1rem; }
+    @media (min-width:38rem) { .field-row.cols-2 { grid-template-columns:1fr 1fr; } }
   </style>
   {% block extra_head %}{% endblock %}
 </head>
@@ -55,7 +101,7 @@ internet, y hay una sola hoja de estilo inline que explicar.
       </span>
     {% endif %}
   </header>
-  <main>
+  <main{% block body_class %}{% endblock %}>
     {% if messages %}
       <ul class="messages">
         {% for message in messages %}
