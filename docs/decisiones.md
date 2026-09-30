@@ -645,7 +645,7 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 
 **Supuestos a confirmar con el docente (no vienen de la rúbrica):**
 - La clave de duplicado (punto 5) y la regla de fecha son criterios propios; cambiarlos toca solo `CommitmentForm.clean()` y `clean_due_date()`. La regla de fecha vive solo en el formulario web: el Admin y el modelo no la aplican.
-- **Zona horaria:** "hoy" sale de `timezone.localdate()`, que sigue `settings.TIME_ZONE`, hoy `'UTC'`. En horario de verano de Chile, desde las 21:00 (20:00 en invierno) la fecha del servidor ya es la de mañana, y elegir la fecha de hoy se rechazaría. Se corrige poniendo `TIME_ZONE = 'America/Santiago'` (decisión de proyecto, no de este patch) o quitando `clean_due_date()`.
+- **Zona horaria:** "hoy" sale de `timezone.localdate()`, que sigue `settings.TIME_ZONE`, hoy `'UTC'`. En horario de verano de Chile, desde las 21:00 (20:00 en invierno) la fecha del servidor ya es la de mañana, y elegir la fecha de hoy se rechazaría. Se corrige poniendo `TIME_ZONE = 'America/Santiago'` (decisión de proyecto, no de este patch) o quitando `clean_due_date()`. **Resuelto por la Decisión 27:** `TIME_ZONE = 'America/Santiago'`.
 - El formulario deja cambiar `responsible` dentro de la propia Delegación, igual que el Admin. Si se quisiera reservar la reasignación al Delegado (HU-15), habría que bloquear ese campo al editar para el Funcionario.
 - Delegaciones y empleados inactivos (`is_active`) no se filtran en los desplegables, igual que en el Admin.
 - `iexact` en SQLite ignora mayúsculas solo en ASCII: `PÉREZ` no coincide con `Pérez`, así que ese caso no se detecta como duplicado. Es el mismo límite que ya tiene `ActivityForm`.
@@ -685,3 +685,34 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 - Sin JavaScript no se puede eliminar (efecto buscado del punto 6).
 
 **Alternativas descartadas:** `DeleteView` estándar con página de confirmación por `GET`; CDN de SweetAlert2; `type="submit"` con la confirmación como mejora progresiva (falla abierto); pasar título y texto como HTML.
+
+
+### Decisión 27 — Portada `/`, destino tras el login y zona horaria (Fase 6, patch 13)
+
+**Origen:** cierre de la Fase 6, decidido por el equipo el 29-sep-2026. Junta dos cambios que se aprobaron en el mismo patch: la portada del sitio web y la zona horaria del proyecto.
+
+**Decisión (portada y login):**
+1. **`/` es la portada del sitio web** (`performance:home`, `HomeView(LoginRequiredMixin, TemplateView)` en `performance/views/home.py`, plantilla `templates/performance/home.html`). Un anónimo que entra a `/` va al login con `?next=/`.
+2. **Un solo destino tras el login para todos los roles:** `LOGIN_REDIRECT_URL = 'performance:home'` (antes `'admin:index'`). Sin redirects por grupo. Un `?next=` explícito sigue teniendo prioridad (`@login_required`, `LoginRequiredMixin`).
+3. **La portada muestra un enlace por listado** (Actividades, Evidencias, Validaciones, Compromisos), **cada uno condicionado a su permiso `view_*`** con `perms.performance.view_*`. Con el seed actual: Administrador ve los 4, Funcionario 3 (Actividades, Evidencias, Compromisos) y Verificador 3 (Actividades, Evidencias, Validaciones).
+4. **Estado vacío:** quien no puede ver ningún módulo (grupo Delegado, sin permisos hoy) recibe un mensaje claro en vez de una página en blanco. Ese mensaje repite las cuatro condiciones `view_*` de los enlaces; al agregar un módulo hay que sumarlo en ambos lugares.
+5. **Enlace al Admin solo si `user.is_staff`**, independiente de los permisos de módulo.
+6. **El encabezado no cambia:** el logo ya apuntaba a `/` y ahora es la forma de volver a la portada y pasar de un listado a otro sin escribir la URL. Agregar navegación al encabezado, si se quiere, es un cambio aparte.
+
+**Decisión (zona horaria):**
+7. **`TIME_ZONE = 'America/Santiago'`** (antes `'UTC'`). `timezone.localdate()` se usa en `EvidenceForm`, `ValidationForm` y `CommitmentForm`. Con UTC, desde las 20:00-21:00 de Chile la fecha del servidor ya era la de mañana y elegir "hoy" como fecha comprometida se rechazaba (Decisión 25). Los comentarios de `forms.py` que decían "UTC" se actualizaron.
+8. **Efectos:** cambio global de una línea en `settings.py`. Los `DateTimeField` se muestran en hora local (Admin y web). **No hay migración de datos:** con `USE_TZ = True` la base guarda UTC (`makemigrations --check` no detecta cambios). El horario de verano lo maneja Django (UTC-3 en verano, UTC-4 en invierno) y los tests cubren ambos. Django también fija la variable de entorno `TZ` del proceso en Linux y macOS, así que `date.today()` en la acción "aprobar evidencias en lote" del Admin queda alineado con la misma zona; en Windows sigue la del sistema.
+
+**Justificación:**
+- **Un solo destino, no `/activities/`.** Llevar el login a `/activities/` mandaría al Delegado a un 403 y el Verificador trabaja con otras entidades. Un redirect por grupo sería más código, más tests y más difícil de defender que una portada que se adapta sola a los permisos.
+- **Los enlaces son comodidad, no seguridad.** Cada listado vuelve a exigir su permiso y su scoping por Delegación; quitar o dejar un enlace no abre ni cierra ningún acceso.
+- **El enlace al Admin existe porque `funcionario_demo` y `verificador_demo` tienen `is_staff=True` en el seed.** Antes el login los dejaba en el Admin; al cambiar el destino ese acceso quedaría invisible.
+- **`America/Santiago` es el único cambio que corrige la causa.** Quitar las reglas de fecha debilitaría la Decisión 23 y dejar UTC mantiene el error en las demos de la tarde.
+
+**Verificación:** `performance/tests_home_web.py`. Los perfiles de cada rol salen de `PERMISOS_POR_GRUPO` del seed y no de una copia a mano. Cubre: anónimo al login con `?next=/`; el login aterriza en `/` (extremo a extremo, con `follow`); enlaces por rol; cada enlace depende solo de su `view_*`; `add`/`change`/`delete` sin `view` no muestran enlace; estado vacío; enlace al Admin solo con `is_staff`; `TIME_ZONE`, `localdate()` en verano e invierno, y una regresión por HTTP (a las 23:30 de Chile, "hoy" se acepta como fecha comprometida y "ayer" se rechaza). `accounts/tests.py` cambia `admin:index` por `performance:home`. Por mutación se comprobó que cada capa tiene un test que falla al quitarla: la condición de cada uno de los 4 enlaces, cada `view_*` del estado vacío, la condición `is_staff`, `LoginRequiredMixin`, `LOGIN_REDIRECT_URL` y `TIME_ZONE`.
+
+**Limitaciones conocidas (no resueltas a propósito):**
+- Los enlaces se deciden por el permiso `view_*`, no por la Delegación: una cuenta con el permiso pero sin `Employee` ve el enlace y el listado le sale vacío (el scoping no le devuelve nada).
+- La portada no muestra contadores ni resúmenes; es solo un índice de listados.
+
+**Alternativas descartadas:** login a `/activities/`; redirects por grupo; dejar `LOGIN_REDIRECT_URL = 'admin:index'`; quitar las reglas de fecha de los formularios; dejar `TIME_ZONE = 'UTC'`.

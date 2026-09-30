@@ -117,7 +117,11 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# Chile (Fase 6, patch 13, Decisión 27). Con 'UTC', desde las 20:00-21:00 de
+# Chile `timezone.localdate()` ya devolvía la fecha de mañana y las reglas de
+# fecha de los formularios rechazaban "hoy". Con USE_TZ activo la base sigue
+# guardando UTC, así que este cambio no requiere migración de datos.
+TIME_ZONE = 'America/Santiago'
 
 USE_I18N = True
 
@@ -137,8 +141,8 @@ MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Autenticación (Fase 4). Las vistas protegidas con @login_required /
-# LoginRequiredMixin redirigen acá; tras entrar se va al Admin hasta que la
-# Fase 6 defina un inicio propio del CRUD web.
+# LoginRequiredMixin redirigen acá; tras entrar se va a la portada del CRUD
+# web (Fase 6, patch 13, Decisión 27), igual para todos los roles.
 LOGIN_URL = 'accounts:login'
-LOGIN_REDIRECT_URL = 'admin:index'
+LOGIN_REDIRECT_URL = 'performance:home'
 LOGOUT_REDIRECT_URL = 'accounts:login'

@@ -121,7 +121,7 @@ class LoginLogoutTests(TestCase):
     def test_login_with_valid_credentials(self):
         res = self.client.post(reverse('accounts:login'),
                                {'username': 'ana', 'password': OLD_PW})
-        self.assertRedirects(res, reverse('admin:index'),
+        self.assertRedirects(res, reverse('performance:home'),
                              fetch_redirect_response=False)
         self.assertIn('_auth_user_id', self.client.session)
 

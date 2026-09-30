@@ -228,8 +228,8 @@ class EvidenceForm(forms.ModelForm):
         activity = cleaned.get('activity')
         date = cleaned.get('date')
         if date:
-            # `localdate()` usa TIME_ZONE (UTC): Chile va por detrás de UTC,
-            # así que la fecha local de un usuario nunca supera a esta.
+            # `localdate()` sigue `settings.TIME_ZONE` ('America/Santiago',
+            # Decisión 27): es la fecha de hoy de quien usa el sistema.
             if date > timezone.localdate():
                 self.add_error('date', 'La fecha de la evidencia no puede ser futura.')
             elif activity and date < activity.date:
@@ -465,7 +465,7 @@ class CommitmentForm(forms.ModelForm):
         # RF-016: compromisos FUTUROS. Solo se exige al registrar o cuando la
         # fecha cambia: un compromiso vencido tiene que seguir siendo
         # editable (p. ej. pasarlo a "Realizado") sin tocar su fecha.
-        # `localdate()` sigue `settings.TIME_ZONE` (hoy 'UTC').
+        # `localdate()` sigue `settings.TIME_ZONE` ('America/Santiago', Decisión 27).
         creating = self.instance.pk is None
         if (creating or 'due_date' in self.changed_data) \
                 and due_date < timezone.localdate():

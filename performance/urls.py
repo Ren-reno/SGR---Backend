@@ -1,10 +1,11 @@
 from django.urls import path
 
-from .views import activity, commitment, evidence, validation
+from .views import activity, commitment, evidence, home, validation
 
 app_name = 'performance'
 
 urlpatterns = [
+    path('', home.HomeView.as_view(), name='home'),
     path('activities/', activity.ActivityListView.as_view(), name='activity_list'),
     path('activities/new/', activity.ActivityCreateView.as_view(), name='activity_create'),
     path('activities/<int:pk>/edit/', activity.ActivityUpdateView.as_view(), name='activity_update'),

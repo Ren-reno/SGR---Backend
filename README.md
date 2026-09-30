@@ -75,14 +75,21 @@ Rutas disponibles:
 
 | Ruta | Qué es |
 |---|---|
+| `/` | Portada: un enlace a cada listado según tus permisos (requiere sesión; sin ella redirige al login) |
 | `/accounts/login/` | Inicio de sesión |
 | `/accounts/logout/` | Cierre de sesión (solo `POST`; se dispara con el botón "Cerrar sesión") |
 | `/accounts/forgot-password/` | Recuperación de contraseña, paso 1: generar el código |
 | `/accounts/reset-password/` | Recuperación de contraseña, paso 2: código + contraseña nueva |
 | `/admin/` | Django Admin |
 
-Tras iniciar sesión se llega al Admin. `http://127.0.0.1:8000/` sin más da 404 por diseño: todavía
-no hay una página de inicio propia (llega con el CRUD web de la Fase 6).
+Tras iniciar sesión se llega a la **portada** (`/`), igual para todos los roles. Muestra un enlace a
+cada listado (Actividades, Evidencias, Validaciones, Compromisos) solo si tu cuenta tiene el permiso
+de **ver** esa entidad, y un enlace al Admin solo si eres *staff*. Si tu cuenta no tiene acceso a
+ningún módulo (hoy, el grupo Delegado), la portada lo avisa en vez de quedar en blanco. El logo del
+encabezado vuelve a la portada desde cualquier pantalla. Ver Decisión 27 en `docs/decisiones.md`.
+
+La zona horaria del proyecto es `America/Santiago` (`TIME_ZONE`): "hoy", en las reglas de fecha de
+los formularios, es la fecha de Chile y no la de UTC.
 
 ## Recuperación de contraseña
 
@@ -143,8 +150,8 @@ Primer CRUD de negocio sobre esa base. Requiere sesión iniciada (sin ella redir
 Son los mismos permisos que ya asigna `seed_sgr` a cada grupo: **Administrador** hace todo;
 **Funcionario** y **Verificador** ven y editan, pero no crean ni eliminan; **Delegado** aún no tiene ninguno.
 
-Tras iniciar sesión el sitio sigue redirigiendo a `admin:index` (`LOGIN_REDIRECT_URL`); el
-listado se abre entrando directo a `/activities/`. Ver Decisión 22 en `docs/decisiones.md`.
+El listado se abre desde la portada (`/`), que lo enlaza a quien tiene `view_activity`, o entrando
+directo a `/activities/`. Ver Decisiones 22 y 27 en `docs/decisiones.md`.
 
 ### Evidencias (paso 6.2)
 
@@ -212,7 +219,7 @@ Delegación del responsable debe coincidir con la elegida. Además se valida que
 comprometida no sea anterior a hoy (al registrar o al cambiarla) y que no exista otro compromiso
 con el mismo responsable, fecha, origen, solicitante y territorio. La eliminación llega en el
 patch final. Ver Decisión 25 en `docs/decisiones.md`, que también lista los supuestos sin
-confirmar (uno de ellos, sobre la zona horaria, conviene leerlo).
+confirmar (uno de ellos, sobre la zona horaria, quedó resuelto en la Decisión 27).
 
 ### Eliminación (Fase 7, patch 12)
 
