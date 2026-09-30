@@ -1,12 +1,11 @@
-"""CRUD web de Activity (Fase 6, paso 6.1): listar, crear y editar.
-
-La eliminación (SweetAlert2 + borrado lógico) llega en el patch final.
+"""CRUD web de Activity: listar, crear y editar (Fase 6, paso 6.1) y
+eliminar (Fase 7, Decisión 26).
 
 Capas de control, todas del lado del servidor:
 - Permiso de modelo (`PermissionRequiredMixin`): los mismos que ya usa el
   Admin y asigna `seed_sgr` -- Funcionario/Verificador ven y editan,
-  solo Administrador crea; Delegado no tiene ninguno todavía. Sin sesión
-  redirige al login; con sesión pero sin permiso responde 403.
+  solo Administrador crea y elimina; Delegado no tiene ninguno todavía.
+  Sin sesión redirige al login; con sesión pero sin permiso responde 403.
 - Scoping por Delegación (`DelegationScopedQuerysetMixin`): en el listado
   filtra las filas; en la edición hace que una actividad ajena responda 404.
 - Valores escritos: `ActivityForm` acota el desplegable `employee`.
@@ -16,6 +15,7 @@ from django.contrib.messages.views import SuccessMessageMixin
 from django.urls import reverse_lazy
 from django.views.generic import CreateView, ListView, UpdateView
 
+from performance.deletion import SoftDeleteView
 from performance.forms import ActivityForm
 from performance.models import Activity
 from performance.pagination import SessionPaginationMixin
@@ -69,3 +69,14 @@ class ActivityUpdateView(
     delegation_lookup = 'employee__'
     success_message = 'Actividad actualizada.'
     extra_context = {'page_title': 'Editar actividad'}
+
+
+class ActivityDeleteView(SoftDeleteView):
+    """Borrado lógico (`deleted_at`). Una actividad con evidencias vivas no
+    se elimina: `Activity._before_soft_delete` lanza `ProtectedError` y la
+    vista base lo muestra como mensaje."""
+    model = Activity
+    permission_required = 'performance.delete_activity'
+    delegation_lookup = 'employee__'
+    success_url = reverse_lazy('performance:activity_list')
+    success_message = 'Actividad eliminada.'

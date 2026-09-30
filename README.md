@@ -138,10 +138,10 @@ Primer CRUD de negocio sobre esa base. Requiere sesión iniciada (sin ella redir
 | `/activities/` | Listado paginado (5 / 15 / 30) de las actividades de tu Delegación | `view_activity` |
 | `/activities/new/` | Alta | `add_activity` |
 | `/activities/<id>/edit/` | Edición (una actividad de otra Delegación responde 404) | `change_activity` |
+| `/activities/<id>/delete/` | Eliminación lógica: solo `POST`, con confirmación SweetAlert2 (ver abajo) | `delete_activity` |
 
 Son los mismos permisos que ya asigna `seed_sgr` a cada grupo: **Administrador** hace todo;
-**Funcionario** y **Verificador** ven y editan, pero no crean; **Delegado** aún no tiene ninguno.
-La eliminación (SweetAlert2 + borrado lógico) llega en el patch final de la Fase 6.
+**Funcionario** y **Verificador** ven y editan, pero no crean ni eliminan; **Delegado** aún no tiene ninguno.
 
 Tras iniciar sesión el sitio sigue redirigiendo a `admin:index` (`LOGIN_REDIRECT_URL`); el
 listado se abre entrando directo a `/activities/`. Ver Decisión 22 en `docs/decisiones.md`.
@@ -213,6 +213,29 @@ comprometida no sea anterior a hoy (al registrar o al cambiarla) y que no exista
 con el mismo responsable, fecha, origen, solicitante y territorio. La eliminación llega en el
 patch final. Ver Decisión 25 en `docs/decisiones.md`, que también lista los supuestos sin
 confirmar (uno de ellos, sobre la zona horaria, conviene leerlo).
+
+### Eliminación (Fase 7, patch 12)
+
+Cada fila del listado muestra un botón **Eliminar** solo a quien tiene el permiso `delete_<modelo>`
+(hoy solo el grupo **Administrador**). Al pulsarlo aparece una confirmación de **SweetAlert2**; solo si
+se confirma se envía un formulario `POST` con token CSRF.
+
+- **La confirmación no es la seguridad.** El servidor vuelve a verificar todo en cada `POST`: sin sesión
+  redirige al login, sin permiso responde 403, un registro de otra Delegación responde 404, sin token
+  CSRF 403 y un `GET` a la URL de eliminar 405.
+- **Borrado lógico:** el registro no se borra, se marca `deleted_at` y deja de aparecer en el sistema
+  (`performance/soft_delete.py`). Una actividad con evidencias vivas no se puede eliminar: se muestra un
+  mensaje pidiendo eliminar primero sus evidencias.
+- **Sin CDN:** SweetAlert2 v11.26.25 (MIT) viaja dentro del repositorio, en
+  `performance/static/performance/vendor/sweetalert2/`, junto con su licencia. Sin JavaScript el botón no
+  elimina nada.
+- **Estado por entidad:** `Activity` listo (este patch). `Evidence` y `Commitment` en el patch 13 y
+  `Validation` en el 14, después de sus CRUD.
+- **Estáticos y despliegue:** es el primer archivo estático del proyecto. Con `DEBUG=True`, `runserver` lo
+  sirve; para el despliegue hará falta `STATIC_ROOT` y `collectstatic` (pendiente de la Fase 9).
+
+Ver Decisión 26 en `docs/decisiones.md`, que también registra el borrado lógico de la Fase 3 y reemplaza
+las Decisiones 12 y 18 en lo que decían sobre no poder borrar `Validation` ni `Commitment`.
 
 ## Cuentas de prueba
 

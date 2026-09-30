@@ -1,0 +1,8 @@
+{% comment %}
+Carga SweetAlert2 (copia local, sin CDN) y el script de confirmación.
+Incluir en {% block extra_js %} de los listados, solo si la persona puede
+eliminar, para no descargar ~80 KB a quien no tiene el botón.
+{% endcomment %}
+{% load static %}
+<script src="{% static 'performance/vendor/sweetalert2/sweetalert2.all.min.js' %}"></script>
+<script src="{% static 'performance/js/confirm-delete.js' %}"></script>

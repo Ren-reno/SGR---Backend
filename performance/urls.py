@@ -8,6 +8,7 @@ urlpatterns = [
     path('activities/', activity.ActivityListView.as_view(), name='activity_list'),
     path('activities/new/', activity.ActivityCreateView.as_view(), name='activity_create'),
     path('activities/<int:pk>/edit/', activity.ActivityUpdateView.as_view(), name='activity_update'),
+    path('activities/<int:pk>/delete/', activity.ActivityDeleteView.as_view(), name='activity_delete'),
     path('evidences/', evidence.EvidenceListView.as_view(), name='evidence_list'),
     path('evidences/new/', evidence.EvidenceCreateView.as_view(), name='evidence_create'),
     # Evidence usa su código (texto) como clave primaria. Se usa `path` y no
