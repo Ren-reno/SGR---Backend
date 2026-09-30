@@ -304,10 +304,13 @@ class EvidenceCreateTests(EvidenceWebTestData):
 
     def test_review_status_cannot_be_set_by_the_poster(self):
         # RN-009: solo una validación aprueba. Quien carga no puede mandar
-        # "Aprobada" en el POST; la evidencia nace con el default del modelo.
+        # `aprobada` en el POST; la evidencia nace con el default del modelo.
         self.client.force_login(self.root)
-        self.client.post(self.url, self.payload(review_status='Aprobada'))
-        self.assertEqual(Evidence.objects.get(code='EVID-NEW').review_status, 'pendiente')
+        self.client.post(self.url, self.payload(
+            review_status=Evidence.REVIEW_STATUS_APROBADA))
+        self.assertEqual(
+            Evidence.objects.get(code='EVID-NEW').review_status,
+            Evidence.REVIEW_STATUS_PENDIENTE)
 
 
 @override_settings(MEDIA_ROOT=_TEST_MEDIA)
@@ -403,9 +406,9 @@ class EvidenceUpdateTests(EvidenceWebTestData):
         self.client.force_login(self.func_a)
         self.client.post(self.url(self.ev_a), {
             'activity': self.act_a.pk, 'date': '2026-06-03', 'metadata': '',
-            'review_status': 'Aprobada'})
+            'review_status': Evidence.REVIEW_STATUS_APROBADA})
         self.ev_a.refresh_from_db()
-        self.assertEqual(self.ev_a.review_status, 'pendiente')
+        self.assertEqual(self.ev_a.review_status, Evidence.REVIEW_STATUS_PENDIENTE)
 
     def test_date_rules_also_apply_when_editing(self):
         self.client.force_login(self.func_a)

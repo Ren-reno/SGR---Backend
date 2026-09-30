@@ -174,7 +174,8 @@ Tres particularidades de `Evidence` que conviene conocer antes de la demo:
   deshabilitado. Al crear solo admite letras, dígitos, `-` y `_`, y no puede repetir un código
   existente (sin distinguir mayúsculas), ni uno de una evidencia eliminada.
 - **El estado de revisión no se edita aquí.** Lo fija el flujo de validación; si el formulario lo
-  permitiera, quien carga una evidencia podría marcarla "Aprobada" (RN-009).
+  permitiera, quien carga una evidencia podría marcarla "Aprobada" (RN-009). Es un conjunto cerrado
+  de tres valores (Pendiente, Aprobada, Rechazada; Decisión 30) y en el Admin se elige de un desplegable.
 - **El archivo se exige al crear**; al editar, si no se sube otro se conserva el actual. La
   validación de tamaño, extensión y contenido real del archivo llega en la Fase 8.
 

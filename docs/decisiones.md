@@ -588,7 +588,7 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 
 **Pendientes que deja este patch:**
 - [ ] **Para 6.3 (`Validation`):** al crear o editar una validación por la web, hay que actualizar `Evidence.review_status` como ya hace la acción del Admin (Decisión 9-bis). Aquí se sacó del formulario justamente porque lo debe fijar esa vía.
-- [ ] `review_status` es texto libre y hay dos grafías en los datos: el default del modelo es `pendiente` y el seed guarda `Pendiente`. El listado compara en minúsculas para el color de la etiqueta; unificarlo es parte de la Decisión 13 pendiente (choices).
+- [x] ~~`review_status` es texto libre y hay dos grafías en los datos: el default del modelo es `pendiente` y el seed guarda `Pendiente`. El listado compara en minúsculas para el color de la etiqueta; unificarlo es parte de la Decisión 13 pendiente (choices).~~ → **resuelto por la Decisión 30** (patch 16): `review_status` pasa a `choices` con el valor guardado en minúscula, y una migración normaliza las filas existentes.
 - [ ] **Los archivos de `/media/` se sirven sin sesión** (`static()` en `config/urls.py`, solo con `DEBUG`): quien conozca la ruta abre el archivo de otra Delegación. Ya era así con el Admin; la vista web solo pone el enlace donde el usuario lo ve. Resolverlo (vista de descarga con permiso y scoping) queda para la Fase 8 o el despliegue.
 - [ ] Al reemplazar el archivo de una evidencia, el anterior queda en disco (Django no lo borra). Limpieza de archivos huérfanos: Fase 8.
 
@@ -621,7 +621,7 @@ El MER completo (14 entidades) sigue siendo el alcance acordado a futuro del rep
 - La redacción `Rechazada` y `Corrección solicitada` es propia (la Guía nombra las tres acciones, no los textos; `Aprobada` es la que ya usan el seed y la acción masiva). `Validation.decision` sigue siendo texto libre en el modelo, así que una fila antigua con otro texto obliga a elegir una de las opciones al editarla.
 - Las reglas de fecha y de observación obligatoria son criterios propios, basados en CA-02 y HU-11.
 - **`version`:** su significado no está confirmado (la Decisión 9 la menciona como historial), así que no es editable y no se incrementa al editar. Tal como está, todas las filas quedan en 1.
-- **`Evidence.review_status` puede quedar desfasado:** una evidencia con una validación `Rechazada` sigue como `Pendiente` (o `pendiente`: el modelo y el seed no coinciden en mayúsculas). Decidir si el formulario debe sincronizarlo, lo que cambiaría la Decisión 9-bis.
+- **`Evidence.review_status` puede quedar desfasado:** una evidencia con una validación `Rechazada` sigue como `Pendiente`. Decidir si el formulario debe sincronizarlo, lo que cambiaría la Decisión 9-bis. *(Las dos grafías `Pendiente` / `pendiente` que había cuando se escribió esto se unificaron en la Decisión 30.)*
 - **Diferencia heredada de 6.0:** `scope_queryset_for_user` trata como "sin restricción" solo al superuser, mientras que el Admin (`_unrestricted`) incluye también al grupo Administrador. Un usuario del grupo Administrador que no sea superuser vería en la web solo su Delegación y en el Admin todo. No afecta al seed (`admin_sgr` es ambas cosas).
 
 ### Decisión 25 — CRUD web de Commitment: listar, crear y editar (Fase 6, paso 6.4)
@@ -794,3 +794,38 @@ Prueba por HTTP real (`seed_sgr` + `runserver`), 31 comprobaciones con las 3 cue
 - **Sin JavaScript no se puede eliminar** (Decisión 26 punto 6), y el diálogo **sigue sin probarse en un navegador real** (paso 7.1): queda como prueba manual pendiente (entrar como `admin_sgr`, pulsar "Eliminar" y comprobar que "Cancelar" no elimina y "Sí, eliminar" sí).
 
 **Alternativas descartadas:** permitir reutilizar la fila eliminada al validar de nuevo (reabre la Decisión 9); recalcular `Evidence.review_status` al eliminar; aviso condicional según el estado de la validación; exigir solo el permiso `delete_validation` sin el rol (más laxo que el Admin).
+
+
+### Decisión 30 — `Evidence.review_status` como conjunto cerrado (`choices`) (Fase 6, patch 16)
+
+**Origen:** ajuste 3.2 de los pendientes de la Fase 6, decidido por el equipo el 29-sep-2026. Cierra la casilla que dejó la Decisión 23 sobre las dos grafías del campo. No cambia lo resuelto sobre la sincronización con `Validation` (Decisiones 9-bis y 24 punto 6).
+
+**Decisión:**
+1. **`review_status` usa `choices` y se guarda siempre en minúscula.** Es un conjunto cerrado, igual que `Commitment.status`; la Decisión 4 distingue los catálogos abiertos (`CatalogItem`) de los conjuntos cerrados, que van como enum. Se elige minúscula porque ya es el default del modelo y lo que comparaba el listado. La etiqueta visible sale capitalizada de las `choices` (`get_review_status_display()`).
+
+   | Valor guardado | Etiqueta | Quién lo escribe hoy |
+   |---|---|---|
+   | `pendiente` | Pendiente | default del modelo y del seed |
+   | `aprobada` | Aprobada | acción masiva "aprobar evidencias en lote" del Admin (Decisión 9-bis) |
+   | `rechazada` | Rechazada | nadie (ver supuestos) |
+
+2. **Constantes en el modelo** (`Evidence.REVIEW_STATUS_PENDIENTE`, `_APROBADA`, `_RECHAZADA` y `REVIEW_STATUS_CHOICES`), como en `Commitment`. El seed y la acción masiva del Admin las usan en vez de escribir el texto a mano.
+3. **Migración `0008_evidence_review_status_choices`:** un `AlterField` (solo cambia las `choices`; no genera SQL) y un `RunPython` que normaliza las filas existentes. La función compara sin distinguir mayúsculas contra los tres valores y actualiza solo las que difieren. Usa `_base_manager`, así que también normaliza las evidencias eliminadas lógicamente (Decisión 26). **Un valor que no sea una variante de mayúsculas de esos tres no se toca**: no hay regla para adivinar a cuál correspondería. La marcha atrás del `RunPython` no hace nada, porque no se puede saber qué grafía tenía cada fila.
+4. **Efectos visibles:** en el Admin el campo pasa de texto libre a desplegable y el filtro lateral muestra las tres etiquetas; el listado web deja de usar `|lower` y muestra la etiqueta en vez del valor guardado; el formulario de edición web muestra la etiqueta como dato de solo lectura. El formulario web sigue sin incluir el campo (Decisión 23 punto 3).
+
+**Justificación:**
+- **Un solo conjunto de valores.** Hasta ahora convivían `pendiente` (modelo), `Pendiente` (seed) y `Aprobada` (Admin), y el listado arreglaba la diferencia con `|lower`. Con `choices` el Admin deja de aceptar cualquier texto y la diferencia no puede reaparecer por el formulario.
+- **Los miembros salen de los valores en uso** (grep de `review_status` sobre el código, las plantillas y los tests), no de una lista inventada.
+
+**Supuestos por confirmar (no vienen de la rúbrica):**
+- **`rechazada` es miembro aunque nadie la escriba.** El listado web ya tenía una etiqueta propia para ella y el plan del Admin habla de aprobar o rechazar (`Plan_Proyecto_SGR_Fusionado.md`); dejarla fuera obligaría a quitar esa rama del listado, y con ella el Admin no podría marcarla a mano. Como `review_status` no se sincroniza con `Validation` (Decisión 24 punto 6), hoy solo se llega a `rechazada` desde el desplegable del Admin.
+- **`Corrección solicitada` no es miembro.** Es una decisión de `Validation` (Decisión 24), no un estado de la evidencia, y ningún documento del proyecto la pone en `review_status`.
+
+**Verificación:** 22 tests nuevos en `performance/tests_review_status.py` (el conjunto y su default, las etiquetas, el rechazo de las grafías antiguas, la función de la migración sobre filas reales, el seed, la acción masiva, el desplegable y el filtro del Admin, y el listado y el formulario web). Cuatro tests existentes (en `tests.py`, `tests_evidence_web.py` y `tests_validation_delete_web.py`) enviaban o guardaban `Aprobada` o `Pendiente` como valor de `review_status`; ahora usan el valor válido. En los dos de `tests_evidence_web.py` (el POST que intenta cambiar el estado) conviene que el valor enviado sea uno válido del conjunto, `aprobada`, que es el que enviaría quien quisiera saltarse la regla RN-009. Suite completa: 417 tests OK (395 + 22), `makemigrations --check` sin cambios. Se comprobó por mutación que cada pieza tiene un test que falla al romperla: 10 mutaciones (la acción masiva escribiendo `Aprobada`, el seed escribiendo `Pendiente`, el modelo sin `choices`, la migración sin sensibilidad a mayúsculas, la migración que ignora las eliminadas, la que pisa los valores desconocidos, la que pierde su marcha atrás, y las tres plantillas). La migración se probó además sobre un SQLite real: aplicada, revertida a la 0007, con filas `Pendiente` y `APROBADA` (una eliminada lógicamente), y aplicada de nuevo, con las tres filas normalizadas.
+
+**Limitaciones conocidas (no resueltas a propósito):**
+- **La base de datos no fuerza el conjunto.** Las `choices` de Django se validan en formularios y en `full_clean()`, no al guardar: un `save()` o un `update()` directo puede escribir cualquier texto. No se agregó un `CheckConstraint`; los únicos escritores son el seed y la acción masiva, y ambos usan las constantes.
+- **Una fila con un valor fuera del conjunto** (solo posible si alguien lo escribió por consola) no se corrige en la migración. El listado la muestra tal cual, con la etiqueta neutra, y el Admin obliga a elegir uno de los tres valores al editarla.
+- **Sigue sin sincronizarse con `Validation`** (Decisiones 9-bis y 24 punto 6): el listado puede mostrar `Pendiente` aunque exista una validación `Rechazada`.
+
+**Alternativas descartadas:** guardar la grafía capitalizada (contradice el default del modelo y lo que ya comparaba el listado); dejar el campo como texto libre y seguir normalizando en la plantilla; un `CheckConstraint` en la base (excede la decisión); incluir `Corrección solicitada`.

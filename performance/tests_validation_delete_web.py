@@ -267,11 +267,13 @@ class ValidationDeleteTests(ValidationDeleteTestData):
     def test_evidence_review_status_is_not_touched(self):
         # Decisión 24 punto 6 y Decisión 9-bis: `review_status` solo cambia
         # con la acción masiva del Admin. Eliminar una validación no lo toca.
-        Evidence.objects.filter(pk=self.ev_a_done.pk).update(review_status='Aprobada')
+        Evidence.objects.filter(pk=self.ev_a_done.pk).update(
+            review_status=Evidence.REVIEW_STATUS_APROBADA)
         self.client.force_login(self.admin_a)
         self.client.post(delete_url(self.val_a))
         self.assertEqual(
-            Evidence.objects.get(pk=self.ev_a_done.pk).review_status, 'Aprobada')
+            Evidence.objects.get(pk=self.ev_a_done.pk).review_status,
+            Evidence.REVIEW_STATUS_APROBADA)
 
     def test_evidence_can_be_deleted_afterwards(self):
         # La validación ya eliminada no debe hacer fallar la cascada de

@@ -385,7 +385,7 @@ class EvidenceAdmin(admin.ModelAdmin):
 
         NOTA — Decisión 9-bis (decisiones.md): además de crear la
         Validation, esta acción marca Evidence.review_status =
-        'Aprobada' en las evidencias efectivamente procesadas. Las
+        'aprobada' (Evidence.REVIEW_STATUS_APROBADA, Decisión 30) en las evidencias efectivamente procesadas. Las
         evidencias EXCLUIDAS (ya validadas o sin archivo) no tocan
         review_status bajo ningún motivo.
 
@@ -462,7 +462,7 @@ class EvidenceAdmin(admin.ModelAdmin):
             )
             # Decisión 9-bis (ver docstring): solo las procesadas cambian
             # review_status. Las excluidas quedan intactas.
-            evidence.review_status = 'Aprobada'
+            evidence.review_status = Evidence.REVIEW_STATUS_APROBADA
             evidence.save(update_fields=['review_status'])
             processed.append(evidence.code)
 

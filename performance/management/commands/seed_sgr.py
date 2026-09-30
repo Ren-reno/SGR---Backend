@@ -474,7 +474,7 @@ class Command(BaseCommand):
                 defaults=dict(
                     activity=actividad,
                     date=actividad.date,
-                    review_status="Pendiente",
+                    review_status=Evidence.REVIEW_STATUS_PENDIENTE,
                 ),
             )
             if creado:

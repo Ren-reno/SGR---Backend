@@ -5,7 +5,7 @@
     <h1>{{ page_title }}</h1>
     {% if object %}
       {# review_status no se edita aquí: lo fija el flujo de validación (Decisión 23) #}
-      <p class="help">Estado de revisión: <strong>{{ object.review_status }}</strong> (lo cambia la validación, no este formulario).</p>
+      <p class="help">Estado de revisión: <strong>{{ object.get_review_status_display }}</strong> (lo cambia la validación, no este formulario).</p>
     {% endif %}
     {# enctype obligatorio: Evidence tiene un FileField; sin él el navegador no envía el archivo #}
     <form method="post" enctype="multipart/form-data" novalidate>

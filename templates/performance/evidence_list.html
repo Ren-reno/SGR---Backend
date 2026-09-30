@@ -35,10 +35,8 @@
               {% else %}—{% endif %}
             </td>
             <td>
-              {# review_status es texto libre (Decisión 13): el seed guarda "Pendiente" y el modelo "pendiente", por eso se compara en minúsculas #}
-              {% with status=evidence.review_status|lower %}
-                <span class="badge {% if status == 'aprobada' %}badge-ok{% elif status == 'rechazada' %}badge-err{% elif status == 'pendiente' %}badge-warn{% else %}badge-neutral{% endif %}">{{ evidence.review_status }}</span>
-              {% endwith %}
+              {# review_status es un conjunto cerrado y se guarda en minúscula (Decisión 30); la etiqueta sale de las choices #}
+              <span class="badge {% if evidence.review_status == 'aprobada' %}badge-ok{% elif evidence.review_status == 'rechazada' %}badge-err{% elif evidence.review_status == 'pendiente' %}badge-warn{% else %}badge-neutral{% endif %}">{{ evidence.get_review_status_display }}</span>
             </td>
             <td class="actions">
               {% if perms.performance.change_evidence %}

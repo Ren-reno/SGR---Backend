@@ -409,7 +409,26 @@ class Activity(SoftDeleteModel):
 class Evidence(SoftDeleteModel):
     """Antes Evidencia (Decisión 13). codigo -> code, actividad -> activity,
     archivo -> file, fecha -> date, metadatos -> metadata,
-    estado_revision -> review_status."""
+    estado_revision -> review_status.
+
+    `review_status` es un conjunto cerrado (Decisión 30), igual que
+    `Commitment.status`: se guarda en minúscula (`pendiente`, `aprobada`,
+    `rechazada`) y la etiqueta visible sale de `get_review_status_display()`.
+    Los miembros salen de los valores que el código ya usaba: `pendiente`
+    (default del modelo y del seed), `aprobada` (acción masiva del Admin,
+    Decisión 9-bis) y `rechazada` (ya la esperaba el listado web y la nombra
+    el plan del Admin). Que exista `rechazada` no implica que algo la escriba
+    hoy: `review_status` solo cambia por la acción masiva (Decisión 24
+    punto 6, sin sincronizar con `Validation`)."""
+    REVIEW_STATUS_PENDIENTE = 'pendiente'
+    REVIEW_STATUS_APROBADA = 'aprobada'
+    REVIEW_STATUS_RECHAZADA = 'rechazada'
+    REVIEW_STATUS_CHOICES = [
+        (REVIEW_STATUS_PENDIENTE, 'Pendiente'),
+        (REVIEW_STATUS_APROBADA, 'Aprobada'),
+        (REVIEW_STATUS_RECHAZADA, 'Rechazada'),
+    ]
+
     code = models.CharField(max_length=30, primary_key=True)
     activity = models.ForeignKey(
         Activity, on_delete=models.PROTECT, related_name='evidence_items'
@@ -417,7 +436,11 @@ class Evidence(SoftDeleteModel):
     file = models.FileField(upload_to='evidence/%Y/%m/')
     date = models.DateField()
     metadata = models.TextField(blank=True)
-    review_status = models.CharField(max_length=30, default='pendiente')
+    review_status = models.CharField(
+        max_length=30,
+        choices=REVIEW_STATUS_CHOICES,
+        default=REVIEW_STATUS_PENDIENTE,
+    )
 
     def __str__(self):
         return self.code

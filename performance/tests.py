@@ -440,7 +440,7 @@ class SoftDeleteAdminTests(MediaRootMixin, TestCase):
         prefix = formset.prefix
         data = {
             'activity': Evidence.objects.get(code='EVID-002').activity_id,
-            'date': '2026-08-12', 'metadata': '', 'review_status': 'Pendiente',
+            'date': '2026-08-12', 'metadata': '', 'review_status': Evidence.REVIEW_STATUS_PENDIENTE,
             f'{prefix}-TOTAL_FORMS': '1', f'{prefix}-INITIAL_FORMS': '0',
             f'{prefix}-MIN_NUM_FORMS': '0', f'{prefix}-MAX_NUM_FORMS': '1',
             f'{prefix}-0-employee': Employee.objects.get(user__username='verificador_demo').pk,
