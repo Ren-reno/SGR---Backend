@@ -81,6 +81,7 @@ Rutas disponibles:
 | `/accounts/forgot-password/` | Recuperación de contraseña, paso 1: generar el código |
 | `/accounts/reset-password/` | Recuperación de contraseña, paso 2: código + contraseña nueva |
 | `/admin/` | Django Admin |
+| `/activities/export/` | Exportar actividades a Excel (requiere sesión y permiso `view_activity`) |
 
 Tras iniciar sesión se llega a la **portada** (`/`), igual para todos los roles. Muestra un enlace a
 cada listado (Actividades, Evidencias, Validaciones, Compromisos) solo si tu cuenta tiene el permiso
@@ -210,6 +211,15 @@ acción "aprobar evidencias en lote" del Admin). La eliminación se describe en 
 
 ### Compromisos (paso 6.4)
 
+### Exportación a Excel (Fase 9)
+
+| URL | Qué hace | Permiso de Django |
+|---|---|---|
+| `/activities/export/` | Descarga en `.xlsx` las actividades visibles para tu cuenta | `view_activity` |
+
+Reutiliza exactamente el mismo scoping por Delegación que `/activities/` (`DelegationScopedQuerysetMixin`):
+un Funcionario descarga solo las actividades de su propia Delegación, no una consulta aparte sin ese filtro.
+Generado con `openpyxl`.
 Mismo patrón que Actividades. Requiere sesión iniciada (sin ella redirige al login):
 
 | URL | Qué hace | Permiso de Django |
@@ -273,13 +283,15 @@ reemplaza las Decisiones 12 y 18 en lo que decían sobre no poder borrar `Valida
 ## Cuentas de prueba
 
 Credenciales ficticias, generadas por `seed_sgr` — nunca se usan credenciales personales en este
-repositorio (Decisión 5 de `docs/decisiones.md`).
+repositorio (Decisión 5 de `docs/decisiones.md`). Las contraseñas **no se publican en este
+repositorio**; se entregan aparte para la demostración (evidencia obligatoria del enunciado
+formativo, sección "Evidencias obligatorias").
 
-| Usuario | Contraseña | Rol (grupo) | Delegación |
-|---|---|---|---|
-| `admin_sgr` | `sgr-demo-2026` | Administrador (superuser) | Delegación Centro |
-| `funcionario_demo` | `sgr-demo-2026` | Funcionario | Delegación Norte |
-| `verificador_demo` | `sgr-demo-2026` | Verificador | Delegación Centro |
+| Usuario | Rol (grupo) | Delegación |
+|---|---|---|
+| `admin_sgr` | Administrador (superuser) | Delegación Centro |
+| `funcionario_demo` | Funcionario | Delegación Norte |
+| `verificador_demo` | Verificador | Delegación Centro |
 
 La contraseña se puede cambiar al correr el seed con `python manage.py seed_sgr --password <otra>`.
 
@@ -356,9 +368,18 @@ versiona en el repo, solo el resultado `.png`).
 Además del seed curado (`seed_sgr`, usado para la demostración en vivo), el proyecto incluye
 un segundo comando que agrega volumen sin tocar los datos curados:
 
-\`\`\`powershell
+```powershell
 python manage.py seed_sgr              # primero, si no lo has corrido
 python manage.py generate_volume_data  # agrega ~1.000 registros adicionales
-\`\`\`
+```
 
 Parámetros opcionales: `--activities`, `--evidences`, `--commitments` (por defecto 700/250/50).
+
+## Validación de archivos de evidencia (Fase 8)
+
+`Evidence.file` acepta imágenes (`.jpg`, `.jpeg`, `.png`, `.webp`) y PDF (`.pdf`), máximo 5 MB.
+La validación no confía solo en la extensión: para imágenes, se abre el archivo con Pillow
+(`Image.verify()`) para confirmar que el contenido es realmente una imagen válida; para PDF, se
+verifica que los primeros bytes correspondan a la cabecera real de un PDF (`%PDF-`). Un archivo
+renombrado (p. ej. un `.txt` guardado como `.jpg`) se rechaza con un mensaje claro, sin guardar
+nada. Ver `performance/validators.py`.
