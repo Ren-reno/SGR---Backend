@@ -104,17 +104,17 @@ class Command(BaseCommand):
         return created
 
     def _generate_evidences(self, count, activities):
-    if not activities:
-        return
-    for _ in range(count):
-        activity = random.choice(activities)
-        Evidence.objects.create(
-            activity=activity,
-            file=self._fake_image_file(),
-            date=activity.date,
-            metadata=fake.sentence(nb_words=6),
-            review_status='pendiente',
-        )
+        if not activities:
+            return
+        for _ in range(count):
+            activity = random.choice(activities)
+            Evidence.objects.create(
+                activity=activity,
+                file=self._fake_image_file(),
+                date=activity.date,
+                metadata=fake.sentence(nb_words=6),
+                review_status='pendiente',
+            )
 
     def _generate_commitments(self, count, employees):
         for _ in range(count):
