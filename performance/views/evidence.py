@@ -1,5 +1,6 @@
 """CRUD web de Evidence: listar, crear y editar (Fase 6, paso 6.2) y eliminar
-(Fase 6, paso 6.3 / Fase 7, Decisión 28).
+(Fase 6, paso 6.3 / Fase 7, Decisión 28). Incluye filtros en el listado
+(Fase 9).
 
 Mismo patrón que `views/activity.py`.
 
@@ -22,11 +23,12 @@ from django.contrib.messages.views import SuccessMessageMixin
 from django.urls import reverse_lazy
 from django.views.generic import CreateView, ListView, UpdateView
 
+from organization.models import Employee
 from performance.deletion import SoftDeleteView
 from performance.forms import EvidenceForm
 from performance.models import Evidence
 from performance.pagination import SessionPaginationMixin
-from performance.scoping import DelegationScopedQuerysetMixin
+from performance.scoping import DelegationScopedQuerysetMixin, scope_queryset_for_user
 
 
 class EvidenceListView(
@@ -38,14 +40,31 @@ class EvidenceListView(
     context_object_name = 'evidences'
     permission_required = 'performance.view_evidence'
     delegation_lookup = 'activity__employee__'
-    # `-pk` (el código) desempata evidencias del mismo día para que ninguna
-    # cambie de página al recargar.
     ordering = ('-date', '-pk')
 
     def get_queryset(self):
-        return super().get_queryset().select_related(
-            'activity', 'activity__employee',
+        qs = super().get_queryset().select_related('activity', 'activity__employee')
+        params = self.request.GET
+        if params.get('date_from'):
+            qs = qs.filter(date__gte=params['date_from'])
+        if params.get('date_to'):
+            qs = qs.filter(date__lte=params['date_to'])
+        if params.get('employee'):
+            qs = qs.filter(activity__employee_id=params['employee'])
+        if params.get('review_status'):
+            qs = qs.filter(review_status=params['review_status'])
+        if params.get('code'):
+            qs = qs.filter(code__icontains=params['code'])
+        return qs
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['filter_employees'] = scope_queryset_for_user(
+            Employee.objects.order_by('name'), self.request.user, '',
         )
+        context['filter_review_statuses'] = Evidence.REVIEW_STATUS_CHOICES
+        context['filter_values'] = self.request.GET
+        return context
 
 
 class _EvidenceFormMixin:
@@ -67,8 +86,6 @@ class EvidenceCreateView(
     extra_context = {'page_title': 'Nueva evidencia'}
 
     def get_success_message(self, cleaned_data):
-        # Quien carga no escribe el código (Decisión 33): el mensaje le dice
-        # cuál recibió la evidencia.
         return f'Evidencia {self.object.code} registrada.'
 
 

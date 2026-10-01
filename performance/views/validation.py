@@ -1,5 +1,6 @@
 """CRUD web de Validation: listar, crear y editar (Fase 6, paso 6.3) y eliminar
-(Fase 6, paso 6.3 / Fase 7, Decisión 29).
+(Fase 6, paso 6.3 / Fase 7, Decisión 29). Incluye filtros en el listado
+(Fase 9).
 
 Reproduce a `ValidationAdmin` (no lo reinventa). Capas de control, todas del
 lado del servidor:
@@ -22,19 +23,17 @@ from django.contrib.messages.views import SuccessMessageMixin
 from django.urls import reverse_lazy
 from django.views.generic import CreateView, ListView, UpdateView
 
+from organization.models import Employee
 from performance.deletion import SoftDeleteView
 from performance.forms import DECISION_REJECTED, ValidationForm
 from performance.models import Validation
 from performance.pagination import SessionPaginationMixin
-from performance.scoping import DelegationScopedQuerysetMixin
+from performance.scoping import DelegationScopedQuerysetMixin, scope_queryset_for_user
 
-# Mismos roles que `_is_verifier(request) or _unrestricted(request)` en
-# performance/admin.py: superuser, grupo Administrador o grupo Verificador.
 REVIEWER_GROUPS = ('Administrador', 'Verificador')
 
 
 def user_can_review(user):
-    """True si `user` puede emitir o modificar revisiones (rol, no permiso)."""
     return user.is_authenticated and (
         user.is_superuser
         or user.groups.filter(name__in=REVIEWER_GROUPS).exists()
@@ -42,10 +41,6 @@ def user_can_review(user):
 
 
 class ReviewerPermissionMixin(PermissionRequiredMixin):
-    """Permiso de modelo + rol de revisor. Pública a propósito: la
-    reutiliza `ValidationDeleteView` (en el Admin, `has_delete_permission`
-    aplica el mismo rol)."""
-
     def has_permission(self):
         return super().has_permission() and user_can_review(self.request.user)
 
@@ -59,22 +54,36 @@ class ValidationListView(
     context_object_name = 'validations'
     permission_required = 'performance.view_validation'
     delegation_lookup = 'evidence__activity__employee__'
-    # `ordering` es obligatorio (ver SessionPaginationMixin); `-pk` desempata
-    # revisiones del mismo día para que ninguna cambie de página al recargar.
     ordering = ('-date', '-pk')
 
     def get_queryset(self):
-        return super().get_queryset().select_related(
+        qs = super().get_queryset().select_related(
             'evidence__activity__employee', 'employee',
         )
+        params = self.request.GET
+        if params.get('date_from'):
+            qs = qs.filter(date__gte=params['date_from'])
+        if params.get('date_to'):
+            qs = qs.filter(date__lte=params['date_to'])
+        if params.get('employee'):
+            qs = qs.filter(employee_id=params['employee'])
+        if params.get('result') in ('true', 'false'):
+            qs = qs.filter(result=(params['result'] == 'true'))
+        return qs
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        # Los botones "Nueva validación", "Editar" y "Eliminar" dependen del
-        # permiso Y del rol (ver el docstring del módulo); el template no
-        # puede consultar el grupo.
         context['can_review'] = user_can_review(self.request.user)
         context['decision_rejected'] = DECISION_REJECTED
+        # Verificadores del propio ámbito, para el filtro (mismo criterio de
+        # scoping que el resto del listado).
+        context['filter_employees'] = scope_queryset_for_user(
+            Employee.objects.filter(
+                user__groups__name__in=REVIEWER_GROUPS,
+            ).distinct().order_by('name'),
+            self.request.user, '',
+        )
+        context['filter_values'] = self.request.GET
         return context
 
 
@@ -109,15 +118,6 @@ class ValidationUpdateView(
 
 
 class ValidationDeleteView(ReviewerPermissionMixin, SoftDeleteView):
-    """Borrado lógico (`deleted_at`). Reproduce `ValidationAdmin.has_delete_permission`:
-    permiso `delete_validation` (solo Administrador en el seed), rol de revisor
-    (Verificador o Administrador) y Delegación (404 si es ajena).
-
-    Es de sentido único desde la web (Decisión 29): la evidencia queda sin
-    validación, pero `ValidationForm` no la vuelve a ofrecer, porque la fila
-    eliminada sigue ocupando el OneToOne. Tampoco toca `Evidence.review_status`
-    (Decisión 24 punto 6).
-    """
     model = Validation
     permission_required = 'performance.delete_validation'
     delegation_lookup = 'evidence__activity__employee__'

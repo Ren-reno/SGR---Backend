@@ -1,17 +1,31 @@
-from django.http import HttpResponse
-from django.utils import timezone
-from django.views.generic import View
-from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
+"""CRUD web de Activity: listar, crear y editar (Fase 6, paso 6.1) y
+eliminar (Fase 7, Decisión 26). Incluye filtros en el listado y
+exportación a Excel (Fase 9).
+
+Capas de control, todas del lado del servidor:
+- Permiso de modelo (`PermissionRequiredMixin`): los mismos que ya usa el
+  Admin y asigna `seed_sgr` -- Funcionario/Verificador ven y editan,
+  solo Administrador crea y elimina; Delegado no tiene ninguno todavía.
+  Sin sesión redirige al login; con sesión pero sin permiso responde 403.
+- Scoping por Delegación (`DelegationScopedQuerysetMixin`): en el listado
+  filtra las filas; en la edición hace que una actividad ajena responda 404.
+- Valores escritos: `ActivityForm` acota el desplegable `employee`.
+"""
 from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
+from django.http import HttpResponse
 from django.urls import reverse_lazy
-from django.views.generic import CreateView, ListView, UpdateView
+from django.utils import timezone
+from django.views.generic import CreateView, ListView, UpdateView, View
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+
+from organization.models import Employee
 from performance.deletion import SoftDeleteView
 from performance.forms import ActivityForm
-from performance.models import Activity
+from performance.models import Activity, CatalogItem, Period
 from performance.pagination import SessionPaginationMixin
-from performance.scoping import DelegationScopedQuerysetMixin
+from performance.scoping import DelegationScopedQuerysetMixin, scope_queryset_for_user
 
 
 class ActivityListView(
@@ -28,9 +42,45 @@ class ActivityListView(
     ordering = ('-date', '-pk')
 
     def get_queryset(self):
-        return super().get_queryset().select_related(
+        qs = super().get_queryset().select_related(
             'employee', 'period', 'meta', 'attention',
         )
+        # Filtros del listado (Fase 9): todos opcionales, por parámetros GET.
+        params = self.request.GET
+        if params.get('date_from'):
+            qs = qs.filter(date__gte=params['date_from'])
+        if params.get('date_to'):
+            qs = qs.filter(date__lte=params['date_to'])
+        if params.get('employee'):
+            qs = qs.filter(employee_id=params['employee'])
+        if params.get('period'):
+            qs = qs.filter(period_id=params['period'])
+        if params.get('activity_type'):
+            qs = qs.filter(activity_type=params['activity_type'])
+        if params.get('attention'):
+            qs = qs.filter(attention_id=params['attention'])
+        return qs
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # Los desplegables respetan el mismo scoping por Delegación que el
+        # listado -- un Funcionario no debe ver, ni en un filtro, empleados
+        # de otra Delegación.
+        context['filter_employees'] = scope_queryset_for_user(
+            Employee.objects.order_by('name'), self.request.user, '',
+        )
+        context['filter_periods'] = Period.objects.order_by('-start_date')
+        context['filter_attentions'] = CatalogItem.objects.filter(
+            category=CatalogItem.CATEGORY_ATTENTION, is_active=True,
+        ).order_by('name')
+        context['filter_activity_types'] = (
+            self.get_scoped_queryset()
+            .order_by('activity_type')
+            .values_list('activity_type', flat=True)
+            .distinct()
+        )
+        context['filter_values'] = self.request.GET
+        return context
 
 
 class _ActivityFormMixin:
@@ -72,6 +122,7 @@ class ActivityDeleteView(SoftDeleteView):
     delegation_lookup = 'employee__'
     success_url = reverse_lazy('performance:activity_list')
     success_message = 'Actividad eliminada.'
+
 
 class ActivityExportView(PermissionRequiredMixin, DelegationScopedQuerysetMixin, View):
     """Exporta a .xlsx las Activity visibles para el usuario actual (Fase 9,
