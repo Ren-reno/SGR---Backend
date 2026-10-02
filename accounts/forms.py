@@ -5,9 +5,7 @@ from django.contrib.auth import get_user_model, password_validation
 from django.contrib.auth.forms import AuthenticationForm
 from django.core.exceptions import ValidationError
 from django.db import transaction
-
-from .models import PasswordResetCode
-
+from .models import LoginAttempt, PasswordResetCode
 User = get_user_model()
 
 
@@ -15,7 +13,16 @@ class LoginForm(AuthenticationForm):
     """Login con `django.contrib.auth` (paso 4.2). Se hereda de
     AuthenticationForm -- que ya valida credenciales con `authenticate()`
     y rechaza usuarios inactivos -- solo para poner etiquetas en español
-    y clases CSS. No se reescribe la autenticación."""
+    y clases CSS. No se reescribe la autenticación.
+
+    Corrección (Ing. Software, hallazgo del docente): se agrega bloqueo
+    tras MAX_ATTEMPTS intentos fallidos, mismo patrón que
+    PasswordResetCode. El bloqueo se revisa ANTES de llamar a
+    authenticate() (así ni una contraseña correcta entra mientras está
+    bloqueada), y un intento fallido se cuenta DESPUÉS de que Django
+    determina que las credenciales no sirven. Un login exitoso resetea
+    el contador.
+    """
 
     username = forms.CharField(
         label='Usuario',
@@ -27,6 +34,32 @@ class LoginForm(AuthenticationForm):
         widget=forms.PasswordInput(attrs={'autocomplete': 'current-password'}),
     )
 
+    def clean(self):
+        username = self.cleaned_data.get('username')
+        attempt = None
+
+        if username:
+            user = User.objects.filter(username=username).first()
+            if user is not None:
+                attempt = LoginAttempt.get_or_create_for(user)
+                if attempt.is_locked:
+                    raise ValidationError(
+                        'Cuenta bloqueada temporalmente por demasiados '
+                        'intentos fallidos. Intenta de nuevo más tarde o '
+                        'recupera tu contraseña.',
+                        code='locked',
+                    )
+
+        try:
+            cleaned = super().clean()
+        except ValidationError:
+            if attempt is not None:
+                attempt.register_failure()
+            raise
+
+        if self.user_cache is not None and attempt is not None:
+            attempt.reset()
+        return cleaned
 
 class ForgotPasswordForm(forms.Form):
     """Paso 1 de la recuperación: identificar al usuario (paso 4.3)."""
