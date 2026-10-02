@@ -146,3 +146,17 @@ MEDIA_ROOT = BASE_DIR / 'media'
 LOGIN_URL = 'accounts:login'
 LOGIN_REDIRECT_URL = 'performance:home'
 LOGOUT_REDIRECT_URL = 'accounts:login'
+
+
+# Email de desarrollo (Fase 3, Ing. Software): en vez de enviar correos
+# reales, los imprime en la consola/log del servidor. No requiere SMTP,
+# cuenta de Gmail ni correo real -- es lo que el profesor pidió: el código
+# de recuperación debe "llegar" por correo, no mostrarse en pantalla.
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = 'sgr-noreply@municipalidadlaserena.cl'
+
+
+# Headers de seguridad adicionales (Ing. Software, mitigación OWASP A05).
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True

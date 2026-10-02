@@ -1,5 +1,5 @@
 from datetime import date
-
+from .forms import ActivityForm
 from django.contrib import admin, messages
 
 from organization.models import Delegation, Employee
@@ -258,11 +258,16 @@ class CommitmentAdmin(admin.ModelAdmin):
 
 @admin.register(Activity)
 class ActivityAdmin(admin.ModelAdmin):
-    # Fase 5 y 6 extienden esta clase — no la dupliques
-    #
-    # Fase 2 (paso 2.3): `meta` se agrega a list_display y
-    # list_select_related -- mismo criterio que period/employee: mostrar
-    # la relación en el listado y evitar N+1 al resolver su __str__.
+    form = ActivityForm
+    def get_form(self, request, obj=None, **kwargs):
+        form_class = super().get_form(request, obj, **kwargs)
+        
+        class _ActivityAdminForm(form_class):
+            def __init__(self_inner, *args, **inner_kwargs):
+                inner_kwargs['user'] = request.user
+                super().__init__(*args, **inner_kwargs)
+        return _ActivityAdminForm
+
     list_display = (
         'id', 'date', 'employee', 'period', 'meta', 'activity_type',
         'attention', 'sub_attention', 'service', 'status',
@@ -275,7 +280,6 @@ class ActivityAdmin(admin.ModelAdmin):
     ordering = ('-date',)
     list_select_related = ('employee', 'employee__delegation', 'period', 'meta', 'attention')
 
-    # --- Fase 5, lo único que agrega esta fase ---
     inlines = [EvidenceInline]
 
     # --- Fase 6, scoping por Delegación y permisos por objeto ---

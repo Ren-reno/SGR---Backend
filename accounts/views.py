@@ -2,6 +2,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.views import LoginView, LogoutView
+from django.core.mail import send_mail
 from django.shortcuts import redirect, render
 from django.urls import reverse_lazy
 from django.views import View
@@ -36,12 +37,14 @@ class ForgotPasswordView(View):
     Responde IGUAL exista o no el usuario -- así este formulario no sirve
     para averiguar qué cuentas existen (enumeración de usuarios).
 
-    Mecanismo de demo (el plan del proyecto no exige correo real): el código
-    se muestra en pantalla SOLO si DEBUG=True, y siempre queda visible para
-    el administrador en el Admin (modelo PasswordResetCode). En un despliegue
-    real se enviaría por correo y esta rama desaparece; por eso la
-    condición es `settings.DEBUG` y no un valor fijo: con DEBUG=False el
-    código jamás llega a la respuesta HTTP.
+    Corrección (Ing. Software, observación del docente): el código YA NO se
+    muestra nunca en la respuesta HTTP, ni siquiera con DEBUG=True -- se
+    "envía" como correo con send_mail(). Con EMAIL_BACKEND de consola
+    (settings.py), el contenido completo del correo aparece en el log del
+    servidor (terminal de runserver en desarrollo, `journalctl -u sgr -f`
+    en el despliegue de AWS), nunca en la pantalla del usuario. No requiere
+    SMTP real ni cuenta de correo verdadera -- sigue siendo apto para la
+    demo sin configurar un servidor de correo.
     """
     template_name = 'accounts/forgot_password.html'
 
@@ -58,21 +61,31 @@ class ForgotPasswordView(View):
             username=username, is_active=True
         ).first()
 
-        demo_code = None
         if user is not None:
             reset = PasswordResetCode.issue_for(user)
-            if settings.DEBUG:
-                demo_code = reset.code
+            send_mail(
+                subject='SGR — Código de recuperación de contraseña',
+                message=(
+                    f'Hola {user.get_username()},\n\n'
+                    f'Tu código de recuperación es: {reset.code}\n'
+                    f'Válido por {PasswordResetCode.CODE_TTL_MINUTES} minutos.\n\n'
+                    'Si no solicitaste este código, ignora este mensaje.'
+                ),
+                from_email=None,  # usa settings.DEFAULT_FROM_EMAIL
+                recipient_list=[user.email or f'{user.get_username()}@demo.local'],
+                fail_silently=True,
+            )
 
-        # Mismo mensaje en ambos casos.
+        # Mismo mensaje en ambos casos, exista o no el usuario (sigue sin
+        # permitir enumeración de cuentas).
         messages.info(
             request,
-            'Si el usuario existe, se generó un código de 6 dígitos válido '
-            f'por {PasswordResetCode.CODE_TTL_MINUTES} minutos.',
+            'Si el usuario existe, se envió un código de 6 dígitos válido '
+            f'por {PasswordResetCode.CODE_TTL_MINUTES} minutos a su correo '
+            'registrado.',
         )
         return render(request, 'accounts/forgot_password_done.html', {
             'username': username,
-            'demo_code': demo_code,
             'ttl_minutes': PasswordResetCode.CODE_TTL_MINUTES,
         })
 

@@ -7,23 +7,6 @@ from django.utils import timezone
 
 
 class PasswordResetCode(models.Model):
-    """Código numérico de 6 dígitos para recuperar la contraseña
-    (Fase 4, paso 4.1; requisito 4 de la rúbrica formativa).
-
-    Reglas de seguridad que este modelo hace cumplir:
-    - El código se genera con `secrets` (CSPRNG), nunca con `random`.
-    - Vence a los CODE_TTL_MINUTES minutos de creado.
-    - Es de un solo uso: `used_at` se llena al consumirse y desde ese
-      momento `is_valid` es False ("no puede reutilizarse luego de una
-      recuperación exitosa").
-    - Limita los intentos fallidos (MAX_ATTEMPTS). Un código de 6 dígitos
-      tiene solo 10**6 combinaciones, así que sin este tope se adivinaría
-      por fuerza bruta en minutos. Por eso el límite de intentos + la
-      expiración corta son la defensa real; hashear el código no aportaría
-      nada con un espacio de búsqueda tan chico.
-    - Pedir un código nuevo invalida los anteriores del mismo usuario
-      (ver `issue_for`), así que nunca hay dos códigos vivos a la vez.
-    """
 
     CODE_LENGTH = 6
     CODE_TTL_MINUTES = 10
@@ -110,3 +93,53 @@ class PasswordResetCode(models.Model):
     def mark_used(self):
         self.used_at = timezone.now()
         self.save(update_fields=['used_at'])
+
+
+class LoginAttempt(models.Model):
+    """Bloqueo temporal tras intentos fallidos de inicio de sesión
+    (Ing. Software, hallazgo del docente: el login no tenía límite de
+    intentos, a diferencia de PasswordResetCode que sí lo tiene).
+
+    Mismo patrón que PasswordResetCode (contador + bloqueo), adaptado:
+    acá no hay "código" que vencer, así que el bloqueo es temporal
+    (LOCKOUT_MINUTES) en vez de permanente hasta pedir uno nuevo. Se
+    cuenta por usuario, no por IP: no depende de infraestructura ni de
+    un cache externo, igual que PasswordResetCode.
+
+    Una fila por usuario (OneToOne): se crea la primera vez que alguien
+    falla al iniciar sesión con ese username, y se reutiliza en adelante.
+    """
+
+    MAX_ATTEMPTS = 5
+    LOCKOUT_MINUTES = 10
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='login_attempt',
+    )
+    failed_attempts = models.PositiveSmallIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f'{self.user} — {self.failed_attempts} intento(s) fallido(s)'
+
+    @property
+    def is_locked(self):
+        return self.locked_until is not None and timezone.now() < self.locked_until
+
+    def register_failure(self):
+        self.failed_attempts += 1
+        if self.failed_attempts >= self.MAX_ATTEMPTS:
+            self.locked_until = timezone.now() + timedelta(minutes=self.LOCKOUT_MINUTES)
+        self.save(update_fields=['failed_attempts', 'locked_until'])
+
+    def reset(self):
+        self.failed_attempts = 0
+        self.locked_until = None
+        self.save(update_fields=['failed_attempts', 'locked_until'])
+
+    @classmethod
+    def get_or_create_for(cls, user):
+        obj, _ = cls.objects.get_or_create(user=user)
+        return obj
