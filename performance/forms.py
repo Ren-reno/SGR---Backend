@@ -1,11 +1,3 @@
-"""ModelForms del CRUD web (Fase 6). Un formulario por entidad; 6.1 agrega
-`ActivityForm`, 6.2 `EvidenceForm`, 6.3 `ValidationForm` y 6.4 `CommitmentForm`,
-todos en este mismo archivo.
-
-Las validaciones de servidor viven acá y en el `clean()` del modelo, no en el
-template ni en JavaScript: lo que el navegador valide es comodidad, lo que
-importa es lo que el servidor rechaza.
-"""
 import re
 
 from django import forms
@@ -24,16 +16,6 @@ _MIN_PHONE_DIGITS = 7
 
 
 class ActivityForm(forms.ModelForm):
-    """Alta y edición de `Activity` (paso 6.1).
-
-    Recibe `user` (lo pasa la vista) para acotar el desplegable `employee` a
-    la Delegación de quien edita. Sin esto, un Funcionario con permiso de
-    edición podía reasignar una actividad a un empleado de otra Delegación
-    cambiando el valor en el POST: la vista solo acota QUÉ registros ve, no
-    QUÉ valores puede escribir. Las reglas de negocio del modelo (fecha
-    dentro del `Period`) las aplica `Model.clean()`, que ModelForm ejecuta
-    solo; acá no se reescriben.
-    """
 
     class Meta:
         model = Activity
@@ -63,8 +45,8 @@ class ActivityForm(forms.ModelForm):
         }
         widgets = {
             'date': forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
-            'request_description': forms.Textarea(attrs={'rows': 3}),
-            'action_taken': forms.Textarea(attrs={'rows': 3}),
+            'request_description': forms.Textarea(attrs={'rows': 3, 'maxlength': 3000}),
+            'action_taken': forms.Textarea(attrs={'rows': 3, 'maxlength': 3000}),
         }
 
     def __init__(self, *args, user, **kwargs):
@@ -76,8 +58,7 @@ class ActivityForm(forms.ModelForm):
         self.fields['meta'].queryset = Meta.objects.select_related(
             'position', 'period'
         ).order_by('item_name')
-        # Solo catálogos vigentes; si la actividad ya tenía uno dado de baja,
-        # se conserva en el desplegable para poder editarla sin perderlo.
+
         attention_qs = CatalogItem.objects.filter(
             category=CatalogItem.CATEGORY_ATTENTION
         )
@@ -105,10 +86,6 @@ class ActivityForm(forms.ModelForm):
         description = (cleaned.get('request_description') or '').strip()
         activity_type = cleaned.get('activity_type')
         if employee and date and activity_type and description:
-            # Duplicado: misma persona, día, tipo y solicitud. Protege del
-            # doble clic en "Guardar" y de re-ingresar lo ya registrado.
-            # `objects` excluye los eliminados lógicamente (Decisión 20), y
-            # en edición se excluye la propia fila.
             duplicates = Activity.objects.filter(
                 employee=employee, date=date, activity_type=activity_type,
                 request_description__iexact=description,
@@ -122,8 +99,7 @@ class ActivityForm(forms.ModelForm):
 
 
 def _activity_label(activity):
-    """Texto del desplegable `activity`: `Activity.__str__` solo trae el id y
-    el tipo, insuficiente para distinguir dos actividades al elegir una."""
+
     return (
         f'#{activity.pk} · {activity.date:%d/%m/%Y} · '
         f'{activity.employee} · {activity.activity_type}'
@@ -131,30 +107,6 @@ def _activity_label(activity):
 
 
 class EvidenceForm(forms.ModelForm):
-    """Alta y edición de `Evidence` (paso 6.2).
-
-    Igual que `ActivityForm`, recibe `user` para acotar el desplegable
-    `activity` a la Delegación de quien escribe: sin eso, quien puede editar
-    una evidencia podría colgarla de una actividad ajena cambiando el valor
-    en el POST (la vista solo acota qué registros ve, no qué valores escribe).
-
-    Lo que este formulario decide distinto al de Activity, por cómo es el
-    modelo:
-
-    - `code` NO está en el formulario. Es la clave primaria y lo genera el
-      sistema al guardar (`Evidence.save()`, RF-011, Decisión 33); como el
-      campo es `editable=False`, un `code` que llegue por POST se ignora. Así
-      se evita la trampa de una clave primaria editable: cambiarla haría que
-      `save()` insertara una fila nueva y dejara la original intacta
-      (RN-010).
-    - `review_status` NO está en el formulario. Es el resultado del flujo de
-      validación (Decisión 9-bis: lo actualiza quien valida, no quien carga),
-      y dejarlo editable permitiría a un Funcionario marcar su propia
-      evidencia como "Aprobada" (RN-009). Al crear toma el default del modelo.
-    - El archivo se exige al crear; al editar, si no se sube otro, se conserva
-      el actual. Tamaño, extensión y contenido real del archivo NO se validan
-      aquí: eso es la Fase 8.
-    """
 
     class Meta:
         model = Evidence
@@ -171,7 +123,7 @@ class EvidenceForm(forms.ModelForm):
         }
         widgets = {
             'date': forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
-            'metadata': forms.Textarea(attrs={'rows': 3}),
+            'metadata': forms.Textarea(attrs={'rows': 3, 'maxlength': 2000}),
         }
 
     def __init__(self, *args, user, **kwargs):
@@ -205,13 +157,6 @@ class EvidenceForm(forms.ModelForm):
         return cleaned
 
 
-# --- Paso 6.3: Validation --------------------------------------------------
-# Valores de `Validation.decision`. La Guía (HU-11 / RF-013) dice que el
-# verificador "puede aprobarla, rechazarla o solicitar corrección". 'Aprobada'
-# es el valor que ya escriben el seed y la acción masiva del Admin; los otros
-# dos son la redacción elegida acá (supuesto a confirmar, ver Decisión 24).
-# `decision` sigue siendo texto libre en el modelo, así que las opciones viven
-# en el formulario y no exigen migración.
 DECISION_APPROVED = 'Aprobada'
 DECISION_REJECTED = 'Rechazada'
 DECISION_CORRECTION = 'Corrección solicitada'
@@ -221,29 +166,10 @@ DECISION_CHOICES = (
     (DECISION_CORRECTION, DECISION_CORRECTION),
 )
 
-# Grupo que ya usa ValidationAdmin.formfield_for_foreignkey para el desplegable
-# `employee`: solo un Employee cuyo usuario es Verificador puede figurar como
-# quien emitió la revisión.
 VERIFIER_GROUP = 'Verificador'
 
 
 class ValidationForm(forms.ModelForm):
-    """Alta y edición de `Validation` (paso 6.3).
-
-    Reproduce lo que ya hace `ValidationAdmin` y lo lleva a la web:
-
-    - `evidence` y `employee` se acotan con `scope_queryset_for_user` (el
-      scoping de la vista solo acota lo que se ve, no lo que se escribe).
-    - `evidence` solo ofrece evidencias SIN validación. `Validation.evidence`
-      es OneToOne (0..1) y la Decisión 9 descartó re-aprobar creando otra
-      fila; una validación eliminada lógicamente también sigue ocupando el
-      lugar (`validation__isnull` mira la tabla completa, no el manager). Al
-      editar, `evidence` queda de solo lectura: una revisión no se mueve a
-      otra evidencia.
-    - `result` no se pide: se deriva de `decision` (RN-009: solo una
-      validación aprobada aporta puntaje), así que nunca pueden contradecirse.
-    - `version` no se edita: su semántica no está confirmada (Decisión 24).
-    """
 
     decision = forms.ChoiceField(
         label='Decisión',
@@ -265,7 +191,7 @@ class ValidationForm(forms.ModelForm):
         }
         widgets = {
             'date': forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
-            'notes': forms.Textarea(attrs={'rows': 3}),
+            'notes': forms.Textarea(attrs={'rows': 3, 'maxlength': 2000}),
         }
 
     def __init__(self, *args, user, **kwargs):
@@ -361,18 +287,7 @@ class ValidationForm(forms.ModelForm):
 
 
 def _active_or_current(queryset, current_pk=None):
-    """`queryset` reducido a los registros vigentes (`is_active=True`), más el
-    registro `current_pk` aunque esté inactivo (Decisión 32).
 
-    Es el mismo criterio que `ActivityForm` aplica a `attention`: un compromiso
-    guardado con un valor que después se dio de baja tiene que poder seguir
-    editándose. Si su propio valor dejara de ser una opción válida, guardarlo
-    sin tocar ese campo fallaría con \"Select a valid choice\".
-
-    Se llama SIEMPRE sobre un queryset ya acotado por Delegación: el valor
-    conservado no puede saltarse el scoping, porque el filtro se suma a lo
-    que ya venía filtrado y no lo reemplaza.
-    """
     condition = Q(is_active=True)
     if current_pk is not None:
         condition |= Q(pk=current_pk)
@@ -380,27 +295,6 @@ def _active_or_current(queryset, current_pk=None):
 
 
 class CommitmentForm(forms.ModelForm):
-    """Alta y edición de `Commitment` (paso 6.4).
-
-    Recibe `user` (lo pasa la vista) para acotar los DOS desplegables que
-    determinan el ámbito del compromiso, igual que hace
-    `CommitmentAdmin.formfield_for_foreignkey`:
-
-    - `delegation`: solo la Delegación del usuario (`scope_delegations_for_user`;
-      `scope_queryset_for_user` no sirve acá porque `Delegation` no tiene
-      campo `delegation_id`).
-    - `responsible`: solo empleados de esa misma Delegación.
-
-    Sin esto, quien puede crear o editar compromisos de su Delegación podía
-    reasignarlos a otra cambiando el valor en el POST: la vista acota QUÉ
-    registros se ven, no QUÉ valores se escriben. Que `responsible` pertenezca
-    a `delegation` lo exige `Commitment.clean()` (Decisión 17), que
-    `ModelForm` ejecuta solo; acá no se reescribe.
-
-    Además, ambos desplegables ofrecen solo registros activos (`is_active`),
-    salvo el valor que el compromiso ya tiene asignado al editarlo (Decisión
-    32). El Admin no aplica este filtro.
-    """
 
     class Meta:
         model = Commitment
@@ -425,7 +319,7 @@ class CommitmentForm(forms.ModelForm):
         }
         widgets = {
             'due_date': forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
-            'observation': forms.Textarea(attrs={'rows': 3}),
+            'observation': forms.Textarea(attrs={'rows': 3, 'maxlength': 2000}),
         }
 
     def __init__(self, *args, user, **kwargs):
