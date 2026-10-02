@@ -154,3 +154,9 @@ LOGOUT_REDIRECT_URL = 'accounts:login'
 # de recuperación debe "llegar" por correo, no mostrarse en pantalla.
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 DEFAULT_FROM_EMAIL = 'sgr-noreply@municipalidadlaserena.cl'
+
+
+# Headers de seguridad adicionales (Ing. Software, mitigación OWASP A05).
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
