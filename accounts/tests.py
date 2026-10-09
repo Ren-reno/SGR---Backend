@@ -2,6 +2,7 @@ from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
+from django.core import mail
 from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -183,10 +184,18 @@ class ForgotPasswordViewTests(TestCase):
         self.url = reverse('accounts:forgot_password')
 
     @override_settings(DEBUG=True)
-    def test_debug_true_shows_code_on_screen(self):
+    def test_debug_true_does_not_show_code_on_screen(self):
+        """El código ya no se muestra en pantalla ni con DEBUG=True (commit
+        13dfe3f, observación del docente): llega solo por correo."""
         res = self.client.post(self.url, {'username': 'ana'})
         reset = PasswordResetCode.objects.get(user=self.user)
-        self.assertContains(res, f'<div class="demo-code">{reset.code}</div>')
+        self.assertEqual(res.status_code, 200)
+        self.assertNotContains(res, reset.code)
+        self.assertNotContains(res, '<div class="demo-code">')
+        # Sí llega por correo (el backend de tests guarda los envíos en outbox).
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['ana@demo.local'])
+        self.assertIn(reset.code, mail.outbox[0].body)
 
     @override_settings(DEBUG=False)
     def test_debug_false_never_leaks_code_in_response(self):
@@ -205,7 +214,8 @@ class ForgotPasswordViewTests(TestCase):
         # Se busca el <div> renderizado, no la clase a secas: `.demo-code`
         # también aparece en el CSS de base.html y daría un falso positivo.
         self.assertNotContains(res, '<div class="demo-code">')
-        self.assertIsNone(res.context['demo_code'])
+        # Tampoco se envía correo alguno: no hay código que entregar.
+        self.assertEqual(mail.outbox, [])
 
     @override_settings(DEBUG=True)
     def test_inactive_user_gets_no_code(self):
@@ -238,7 +248,10 @@ class ResetPasswordFlowTests(TestCase):
                                {'username': 'ana'})
         code = PasswordResetCode.objects.filter(
             user=self.user, used_at__isnull=True).get().code
-        self.assertContains(res, code)
+        # El código ya no se muestra en pantalla: llega solo por correo.
+        self.assertNotContains(res, code)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn(code, mail.outbox[0].body)
 
         res = self.client.post(self.url, self.payload(code=code))
         self.assertRedirects(res, reverse('accounts:login'),

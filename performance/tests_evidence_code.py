@@ -131,7 +131,14 @@ class EvidenceCodeFieldTests(EvidenceCodeTestCase):
     def test_a_new_evidence_passes_full_clean_before_it_has_a_code(self):
         # El Admin y los formularios validan el modelo antes de guardar; el
         # código se asigna recién en save().
-        self.unsaved().full_clean()
+        evidence = self.unsaved()
+        # `file='evidence/x.pdf'` (el helper) es solo un nombre que no existe
+        # en disco, y desde la Fase 8 el validador abre el archivo para
+        # comprobar su contenido. Se usa un PDF mínimo en memoria:
+        # full_clean() no lo guarda, así que no escribe en /media/.
+        evidence.file = SimpleUploadedFile(
+            'x.pdf', b'%PDF-1.4 x', content_type='application/pdf')
+        evidence.full_clean()
 
 
 class EvidenceCodeCollisionTests(EvidenceCodeTestCase):
