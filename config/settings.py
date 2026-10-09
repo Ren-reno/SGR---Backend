@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+from datetime import timedelta
 from pathlib import Path
 import environ
 
@@ -40,9 +41,11 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
     'accounts',
     'organization',
     'performance',
+    'api',
 ]
 
 MIDDLEWARE = [
@@ -160,3 +163,35 @@ DEFAULT_FROM_EMAIL = 'sgr-noreply@municipalidadlaserena.cl'
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
+
+
+# API REST (Evaluación Sumativa 3): Django REST Framework + Simple JWT.
+# - Autenticación: SOLO JWT (`Authorization: Bearer <access>`). No se agrega
+#   SessionAuthentication a propósito: con ella, una solicitud sin token
+#   recibiría 403 en vez de 401.
+# - Permiso por defecto: usuario autenticado; luego se reemplaza por una clase
+#   de permisos por rol.
+# - Renderer solo JSON: no se expone el navegador HTML de DRF.
+# - Paginación: 25 por página; otra página se pide con ?page=N.
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 25,
+}
+
+# Simple JWT. Los tokens se firman con SECRET_KEY (HS256): usar una de 32 o más
+# caracteres (la que genera Django tiene 50). Las duraciones se pueden cambiar
+# en el .env; si faltan, se usan estos valores por defecto.
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=env.int('JWT_ACCESS_MINUTES', default=30)),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=env.int('JWT_REFRESH_DAYS', default=1)),
+    'AUTH_HEADER_TYPES': ('Bearer',),
+}
