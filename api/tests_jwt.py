@@ -8,6 +8,7 @@ las respuestas son JSON.
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.test import override_settings
 from django.urls import path, reverse
 from django.utils import timezone
@@ -16,6 +17,8 @@ from rest_framework.test import APITestCase
 from rest_framework.views import APIView
 from rest_framework_simplejwt.settings import api_settings as jwt_settings
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
+
+from api.permissions import GROUP_API_OPERADOR
 
 User = get_user_model()
 
@@ -182,6 +185,10 @@ class GlobalDefaultsTests(APITestCase):
         self.assertEqual(res['Content-Type'], 'application/json')
 
     def test_valid_access_token_is_accepted(self):
+        # El permiso por defecto es por rol: hace falta un rol de la API (el de
+        # solo lectura basta para un GET). Sin rol sería 403, no 401.
+        group, _ = Group.objects.get_or_create(name=GROUP_API_OPERADOR)
+        self.user.groups.add(group)
         self.bearer(AccessToken.for_user(self.user))
         res = self.client.get('/probe/')
         self.assertEqual(res.status_code, 200)

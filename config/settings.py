@@ -169,8 +169,9 @@ CSRF_COOKIE_HTTPONLY = True
 # - Autenticación: SOLO JWT (`Authorization: Bearer <access>`). No se agrega
 #   SessionAuthentication a propósito: con ella, una solicitud sin token
 #   recibiría 403 en vez de 401.
-# - Permiso por defecto: usuario autenticado; luego se reemplaza por una clase
-#   de permisos por rol.
+# - Permiso por defecto: ApiRolePermission (api/permissions.py). Falla cerrado:
+#   toda vista nueva queda protegida por rol salvo que declare otra cosa (los
+#   endpoints de token de Simple JWT son públicos por definición).
 # - Renderer solo JSON: no se expone el navegador HTML de DRF.
 # - Paginación: 25 por página; otra página se pide con ?page=N.
 REST_FRAMEWORK = {
@@ -178,7 +179,7 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+        'api.permissions.ApiRolePermission',
     ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
