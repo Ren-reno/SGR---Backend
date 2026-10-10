@@ -184,8 +184,9 @@ REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
     ],
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'DEFAULT_PAGINATION_CLASS': 'api.pagination.StandardPagination',
     'PAGE_SIZE': 25,
+    'EXCEPTION_HANDLER': 'api.exceptions.api_exception_handler',
 }
 
 # Simple JWT. Los tokens se firman con SECRET_KEY (HS256): usar una de 32 o más
