@@ -4,12 +4,13 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
-from .views import ActivityViewSet
+from .views import ActivityViewSet, CommitmentViewSet
 
 app_name = 'api'
 
 router = DefaultRouter()
 router.register('activities', ActivityViewSet, basename='activity')
+router.register('commitments', CommitmentViewSet, basename='commitment')
 
 urlpatterns = [
     # POST {"username", "password"} -> {"access", "refresh"}

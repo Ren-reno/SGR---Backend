@@ -1,6 +1,7 @@
+from django.utils import timezone
 from rest_framework import serializers
 
-from performance.models import Activity
+from performance.models import Activity, Commitment
 
 from .mixins import ModelCleanMixin
 from .validators import validate_phone
@@ -75,5 +76,73 @@ class ActivitySerializer(ModelCleanMixin, serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     'Ya existe una actividad con el mismo funcionario, '
                     'fecha, tipo y solicitud.'
+                )
+        return attrs
+
+
+class CommitmentSerializer(ModelCleanMixin, serializers.ModelSerializer):
+    """Commitment: campos explicitos, clean() del modelo (la delegacion debe
+    ser la del responsable), fecha comprometida no anterior a hoy y deteccion
+    de duplicados (mismas reglas que CommitmentForm, sin scoping por
+    delegacion: decision D4)."""
+
+    class Meta:
+        model = Commitment
+        fields = [
+            'id',
+            'delegation',
+            'responsible',
+            'origin',
+            'requester',
+            'territory',
+            'due_date',
+            'support_area',
+            'status',
+            'observation',
+        ]
+        read_only_fields = ['id']
+
+    def validate_due_date(self, value):
+        # Como CommitmentForm.clean_due_date: solo se exige al crear o cuando
+        # la fecha cambia, para que un compromiso vencido siga siendo editable
+        # (por ejemplo pasarlo a "realizado") sin tocar su fecha.
+        creating = self.instance is None
+        changed = self.instance is not None and self.instance.due_date != value
+        if (creating or changed) and value < timezone.localdate():
+            raise serializers.ValidationError(
+                'La fecha comprometida no puede ser anterior a hoy.'
+            )
+        return value
+
+    def validate(self, attrs):
+        # 1) Model.clean() (delegacion = delegacion del responsable).
+        attrs = super().validate(attrs)
+
+        # 2) Duplicados. En PATCH, los campos ausentes salen de la instancia.
+        def current(name):
+            if name in attrs:
+                return attrs[name]
+            return getattr(self.instance, name, None)
+
+        responsible = current('responsible')
+        due_date = current('due_date')
+        origin = current('origin')
+        requester = current('requester')
+        territory = current('territory')
+
+        if responsible and due_date and origin and requester and territory:
+            duplicates = Commitment.objects.filter(
+                responsible=responsible,
+                due_date=due_date,
+                origin__iexact=origin,
+                requester__iexact=requester,
+                territory__iexact=territory,
+            )
+            if self.instance is not None:
+                duplicates = duplicates.exclude(pk=self.instance.pk)
+            if duplicates.exists():
+                raise serializers.ValidationError(
+                    'Ya existe un compromiso con el mismo responsable, '
+                    'fecha, origen, solicitante y territorio.'
                 )
         return attrs
