@@ -1,8 +1,14 @@
 from rest_framework import viewsets
 
+from performance import models as perf_models
 from performance.models import Activity, Commitment
 
-from .serializers import ActivitySerializer, CommitmentSerializer
+from .serializers import (
+    ActivitySerializer,
+    CommitmentSerializer,
+    MetaSerializer,
+    PeriodSerializer,
+)
 
 
 class ActivityViewSet(viewsets.ModelViewSet):
@@ -39,3 +45,29 @@ class CommitmentViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         instance.soft_delete()
+
+
+class MetaViewSet(viewsets.ModelViewSet):
+    """CRUD de Meta. Eliminacion fisica (D2): DELETE responde 204; si la meta
+    tiene actividades asociadas (PROTECT), responde 409.
+
+    Permisos: heredados de ApiRolePermission (settings.REST_FRAMEWORK).
+    """
+
+    serializer_class = MetaSerializer
+    queryset = (
+        perf_models.Meta.objects
+        .select_related('position', 'period')
+        .order_by('id')
+    )
+
+
+class PeriodViewSet(viewsets.ModelViewSet):
+    """CRUD de Period. Eliminacion fisica (D2): DELETE responde 204; si el
+    periodo tiene metas o actividades asociadas (PROTECT), responde 409.
+
+    Permisos: heredados de ApiRolePermission (settings.REST_FRAMEWORK).
+    """
+
+    serializer_class = PeriodSerializer
+    queryset = perf_models.Period.objects.order_by('id')
