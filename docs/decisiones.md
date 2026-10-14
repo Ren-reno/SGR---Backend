@@ -921,3 +921,21 @@ Prueba por HTTP real (`seed_sgr` + `runserver`), 31 comprobaciones con las 3 cue
 - **Los códigos heredados que no siguen el formato** (por ejemplo `mi-foto`, creados antes de esta decisión) se conservan, se pueden editar y se ven en el listado; solo no cuentan para el numerado.
 
 **Alternativas descartadas:** el híbrido (código vacío se genera, código escrito se valida): dejaba el código escribible y dos formatos conviviendo. Un `MAX` con `CAST` en SQL (ver punto 4). Un contador en una tabla aparte o `select_for_update()`: más piezas y más migraciones para cientos de filas, y `select_for_update()` no hace nada en SQLite, el motor de la Decisión 1B; la clave primaria como árbitro con reintento cubre el caso. Generarlo en el formulario: el Admin y el seed se habrían quedado sin generación. Un número autoincremental o un UUID como clave: RF-011 pide un código legible para nombrar y vincular el archivo, y cambiaría la clave primaria de `Evidence` y la clave foránea de `Validation`.
+
+### Decisión 34 — Alcance de la Evaluación Sumativa 3: API REST con JWT (Fase F13)
+
+**Origen:** plan de trabajo de la Evaluación Sumativa 3 (API RESTful con Django REST Framework y JWT, 6 modelos, al menos 2.000 registros, roles y pruebas en Apidog), acordado por el equipo antes de repartir las fases.
+
+**Aclaración de alcance.** La "Eva 3" que menciona la Decisión 15 (8 módulos y 14 entidades) **no es** el alcance de esta evaluación. La única fuente de requisitos de la Evaluación Sumativa 3 es `docs/Evaluacion_Sumativa_3_API_REST_JWT_Vespertino_TI3041.md`. No se crean modelos nuevos ni migraciones: bastan los 9 modelos de negocio que ya existen, de los que se piden 6.
+
+**Decisiones:**
+1. **D1 — Modelos expuestos.** Principales con CRUD: `Activity`, `Commitment`, `Meta` y `Period`. Operacionales de solo lectura (lista y detalle): `Evidence` y `Validation`. `Activity` y `Commitment` ya traen borrado lógico y `clean()`; `Meta` trae las reglas RN-001 y RN-002; `Period` es simple. `Evidence` (subida de archivos) y `Validation` (historial de revisión) quedan de solo lectura para no mezclar la subida de archivos con JSON. No se exponen `User`, `Group`, `Permission`, `Session`, `PasswordResetCode` ni `LoginAttempt`.
+2. **D2 — Eliminación.** `Activity` y `Commitment`: borrado lógico (`204`; el registro deja de aparecer y su detalle responde `404`). `Meta` y `Period`: borrado físico (`204`; `409` si tienen referencias `PROTECT`).
+3. **D3 — Roles.** Grupos nuevos `api_admin` y `api_operador`, sin tocar los de la aplicación web. Usuarios `api_admin`, `api_operador` y `api_sinrol`: activos, no *staff* y no superusuarios. Sin atajo para superusuarios. La contraseña no se escribe en el repositorio: se pasa por argumento o variable de entorno y se entrega aparte.
+4. **D4 — Sin filtro por delegación en la API.** No se aplica el filtro por delegación de la parte web (`scoping.py`): la rúbrica no lo pide y dejaría al operador con listas parciales o vacías. Queda como límite conocido.
+5. **D5 — Paginación.** `PageNumberPagination` con 25 registros por página, `?page=N` y `?page_size=` opcional (máximo 100).
+6. **D6 — Reparto del trabajo.** El trabajo se divide en fases, y cada integrante debe poder explicar en la defensa lo que hizo; su rastro queda en el historial de Git. Reparto: Reinaldo F0 a F5 (decisiones y rama, línea base de tests, dependencias, DRF con JWT, roles y permisos, y comando de carga), Maricel F6, F7 y F14 (infraestructura común, `Activity` y ensayo en entorno limpio), Valentina F8, F10 y F12 (`Commitment`, `Evidence` y `Validation`, colección de Apidog) y Constanza F9, F11 y F13 (`Meta` y `Period`, matriz integral de pruebas, README y decisiones).
+
+**Alternativas descartadas:** exponer `Delegation` en lugar de `Period` (`Period` es más simple y ya tiene relación con `Meta` y `Activity`); dar a `Evidence` y `Validation` escritura por la API (obligaba a manejar multipart y archivos); borrado lógico en todos los recursos (`Meta` y `Period` no lo tienen y no se pueden cambiar los modelos); aplicar el filtro por delegación a la API (ver D4).
+
+**Documentación y pruebas:** la sección "API REST (Evaluación Sumativa 3)" del `README.md` explica cómo levantar, cargar datos y probar la API. La colección y la matriz de pruebas de Apidog están en `docs/api/`.

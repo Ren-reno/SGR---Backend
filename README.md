@@ -3,6 +3,8 @@
 Proyecto de Evaluación Sumativa II — Programación Back End (TI3041).
 Caso: Delegaciones municipales, I. Municipalidad de La Serena.
 
+> La **API REST con JWT** de la Evaluación Sumativa 3 está documentada en la sección [API REST (Evaluación Sumativa 3)](#api-rest-evaluación-sumativa-3), al final de este archivo.
+
 ## Requisitos previos
 - Python 3.10+ (probado con 3.12)
 - Git
@@ -383,3 +385,181 @@ La validación no confía solo en la extensión: para imágenes, se abre el arch
 verifica que los primeros bytes correspondan a la cabecera real de un PDF (`%PDF-`). Un archivo
 renombrado (p. ej. un `.txt` guardado como `.jpg`) se rechaza con un mensaje claro, sin guardar
 nada. Ver `performance/validators.py`.
+
+
+## API REST (Evaluación Sumativa 3)
+
+API RESTful del SGR hecha con Django REST Framework y autenticación JWT (Simple JWT), Evaluación
+Sumativa 3 de Programación Back End (TI3041). Vive en la app `api/` y se publica bajo `/api/`.
+No modifica los modelos ni crea migraciones: usa los que ya existen. La rúbrica está en
+`docs/Evaluacion_Sumativa_3_API_REST_JWT_Vespertino_TI3041.md` y las decisiones de alcance en la
+Decisión 34 de `docs/decisiones.md`.
+
+### Los 6 modelos expuestos
+
+Cuatro principales (CRUD completo) y dos operacionales (solo lectura: lista y detalle).
+
+| Modelo | Tipo | Relaciones (FK) | Endpoint | Identificador en la URL | Eliminación |
+|---|---|---|---|---|---|
+| `Period` | Principal | — | `/api/periods/` | `id` | Física (409 si tiene metas o actividades) |
+| `Meta` | Principal | `position` → Cargo, `period` → Period | `/api/metas/` | `id` | Física (409 si tiene actividades) |
+| `Commitment` | Principal | `delegation` → Delegación, `responsible` → Funcionario | `/api/commitments/` | `id` | Lógica |
+| `Activity` | Principal | `employee` → Funcionario, `period` → Period, `meta` → Meta, `attention` → Catálogo | `/api/activities/` | `id` | Lógica |
+| `Evidence` | Operacional | `activity` → Activity | `/api/evidence/` | `code` (por ejemplo `EVID-0001`) | No se expone |
+| `Validation` | Operacional | `evidence` → Evidence (uno a uno), `employee` → Funcionario | `/api/validations/` | `id` | No se expone |
+
+Los modelos de usuarios, grupos, permisos y sesiones no se exponen.
+
+### Endpoints y métodos
+
+| Método y ruta | Qué hace |
+|---|---|
+| `POST /api/token/` | Entrega `access` y `refresh` a partir de `username` y `password` |
+| `POST /api/token/refresh/` | Entrega un `access` nuevo a partir del `refresh` |
+| `GET /api/<recurso>/` | Lista paginada (los 6 recursos) |
+| `GET /api/<recurso>/<id>/` | Detalle (los 6 recursos) |
+| `POST /api/<recurso>/` | Crear (solo `periods`, `metas`, `commitments`, `activities`) |
+| `PUT` / `PATCH /api/<recurso>/<id>/` | Actualizar completo o parcial (solo los 4 principales) |
+| `DELETE /api/<recurso>/<id>/` | Eliminar (solo los 4 principales) |
+
+En `evidence` y `validations` cualquier método de escritura responde `405`. Todas las peticiones
+de datos llevan la cabecera `Authorization: Bearer <access>`. El `access` dura 30 minutos y el
+`refresh` 1 día; se pueden cambiar con `JWT_ACCESS_MINUTES` y `JWT_REFRESH_DAYS` en el `.env`
+(ver `.env.example`).
+
+### Roles y permisos
+
+Los roles son grupos propios de la API (no se tocan los de la aplicación web). Ser superusuario
+**no** da acceso a la API: hay que pertenecer a uno de los dos grupos.
+
+| Usuario | Grupo | `GET` (lista y detalle) | `POST`, `PUT`, `PATCH`, `DELETE` |
+|---|---|---|---|
+| Sin token o token inválido | — | 401 | 401 |
+| `api_sinrol` | Ninguno | 403 | 403 |
+| `api_operador` | `api_operador` | 200 | 403 |
+| `api_admin` | `api_admin` | 200 | Permitido en los 4 recursos principales |
+
+Los tres usuarios los crea el comando de carga (ver más abajo): están activos y no son *staff* ni
+superusuarios. No se filtra por delegación en la API (Decisión 34).
+
+### Preparación del entorno
+
+Mismos pasos de las secciones "Instalación" y "Variables de entorno" de este README, en PowerShell:
+
+```powershell
+git clone https://github.com/Ren-reno/SGR---Backend
+cd SGR---Backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+copy .env.example .env
+```
+
+Completar `SECRET_KEY` en el `.env` con un valor de **32 o más caracteres** (los tokens se firman
+con ella; la que genera el comando de la sección "Variables de entorno" sirve).
+
+### Migraciones y carga de datos
+
+```powershell
+python manage.py migrate
+python manage.py load_api_demo_data --password <CLAVE>
+```
+
+La clave **no está escrita en el repositorio**: se entrega aparte y debe tener al menos 8
+caracteres. Para que no quede en el historial de la terminal se puede pasar por variable de entorno:
+
+```powershell
+$env:API_DEMO_PASSWORD = '<CLAVE>'
+python manage.py load_api_demo_data
+```
+
+El comando es idempotente (correrlo de nuevo no duplica nada) y hace, en orden: corre `seed_sgr`,
+agrega un período cerrado y las metas por cargo, crea los grupos `api_admin` y `api_operador` con
+los usuarios `api_admin`, `api_operador` y `api_sinrol` (todos con la misma clave), completa el
+volumen hasta los mínimos y verifica que ningún modelo quede vacío. Al terminar imprime una tabla
+con el conteo de cada modelo y el **TOTAL**. Con los valores por defecto los 6 modelos suman
+**2.168 registros** (mínimo exigido: 2.000):
+
+| Modelo | Mínimo por defecto |
+|---|---|
+| `Activity` | 1.600 |
+| `Evidence` | 300 |
+| `Commitment` | 150 |
+| `Validation` | 100 |
+| `Meta` | 16 (las metas de cada cargo, en 2 períodos) |
+| `Period` | 2 |
+
+Se pueden cambiar con `--activities`, `--evidences`, `--commitments`, `--validations`,
+`--min-total` y `--seed` (con la misma semilla salen los mismos datos). Si el total no llega al
+mínimo, el comando termina con error.
+
+### Levantar y probar
+
+```powershell
+python manage.py runserver
+```
+
+Pedir un token (PowerShell) y usarlo:
+
+```powershell
+$r = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/token/ `
+  -ContentType 'application/json' `
+  -Body (@{ username = 'api_admin'; password = '<CLAVE>' } | ConvertTo-Json)
+Invoke-RestMethod -Uri http://127.0.0.1:8000/api/periods/ `
+  -Headers @{ Authorization = "Bearer $($r.access)" }
+```
+
+Pruebas automáticas de la API:
+
+```powershell
+python manage.py test api
+```
+
+### Paginación
+
+Todas las listas usan paginación por página, de **25** registros. Se pide otra página con
+`?page=2` y otro tamaño con `?page_size=50` (máximo 100). La respuesta trae `count`, `next`,
+`previous` y `results`:
+
+```
+GET /api/activities/?page=2
+GET /api/activities/?page=1&page_size=50
+```
+
+### Eliminación
+
+- **Lógica** en `Activity` y `Commitment`: `DELETE` responde `204`, el registro queda en la base
+  pero deja de aparecer en las consultas, y un `GET` posterior a su detalle responde `404`.
+- **Física** en `Period` y `Meta`: `DELETE` responde `204` y la fila se borra. Si tiene datos que
+  dependen de ella (`PROTECT`), responde `409` y no se borra.
+
+### Códigos de respuesta
+
+| Código | Cuándo |
+|---|---|
+| `200` | Lectura o actualización correcta |
+| `201` | Creación correcta |
+| `204` | Eliminación correcta (sin cuerpo) |
+| `400` | Datos inválidos: campo obligatorio, formato o regla de negocio (por ejemplo, fechas invertidas o ponderadores que suman más de 100 %). El cuerpo indica el campo |
+| `401` | Sin token, token inválido o vencido, o credenciales incorrectas al pedir el token |
+| `403` | Usuario sin rol de la API, u operador que intenta escribir |
+| `404` | El registro no existe (o fue eliminado lógicamente) |
+| `405` | Método de escritura sobre `evidence` o `validations` |
+| `409` | Eliminación de un registro que tiene datos asociados |
+
+### Pruebas en Apidog
+
+1. Con el servidor levantado y los datos cargados, importar en Apidog la colección
+   `docs/api/sgr_api.postman_collection.json` (formato Postman v2.1).
+2. Crear un **entorno local** y seleccionarlo. Completar solo ahí las variables: `base_url`
+   (`http://127.0.0.1:8000`) y el usuario y la clave de cada rol (`username` / `password` para
+   `api_admin`, `username_operador` / `password_operador`, `username_sinrol` / `password_sinrol`).
+   La colección viene con las variables vacías.
+3. Ejecutar las carpetas en orden, de la 0 a la 7. La **0** (JWT y datos de referencia) va primero
+   porque guarda los tokens y los identificadores que usan las demás.
+4. Registrar lo observado en `docs/api/matriz_pruebas_apidog.md` (las columnas de resultado se
+   dejan vacías en el repositorio).
+
+Antes de mostrar o guardar capturas o respuestas hay que **ocultar** `access`, `refresh` y las
+contraseñas (reemplazarlos por `***`). No se suben a Git contraseñas, tokens ni la colección
+exportada sin revisarla.
